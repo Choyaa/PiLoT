@@ -258,13 +258,11 @@ if __name__ == "__main__":
     points2d_ref = np.array([[24, 54]])   
 
     points2d_ref_valid, point3D_from_ref, _, _ = get_3D_samples(points2d_ref, ref_depth_image, ref_T, rcamera)
-    print('3D points in WGS84:', ECEF_to_WGS84(point3D_from_ref[0]))
-    
-    points2d_ref, _, _, _ = get_points2D_ECEF_projection(np.array(ref_T), rcamera, point3D_from_ref, points2d_ref_valid, use_valid = False, num_samples=20000)
-    print('2D points on Ref: ', points2d_ref)
+    print(ECEF_to_WGS84(point3D_from_ref[0]))
     
     points2d_query, _, Points_3D_ECEF_origin, valid = get_points2D_ECEF_projection(np.array(query_T), qcamera, point3D_from_ref, points2d_ref_valid, use_valid = False, num_samples=20000)
-    print('2D points on Query: ', points2d_query)
+    print(point3D_from_ref[0])
+    print(ECEF_to_WGS84(point3D_from_ref[0]))
     visualize_matches(rgb_image, ref_image, 
                     points2d_query, 
                     points2d_ref)

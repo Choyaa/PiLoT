@@ -176,9 +176,9 @@ class DualProcessTask:
         else:
             self.img_list = glob.glob(img_path + "/*.png") + glob.glob(img_path + "/*.jpg") + glob.glob(img_path + "/*.JPG")
             self.img_list = sorted(self.img_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
-        start = 379
+        start = 0
         # end = 30
-        self.img_list = self.img_list[start:400]
+        self.img_list = self.img_list[start:500]
         self.query_list = read_image_list(self.img_list, scale = self.query_resize_ratio, distortion=cam_query['distortion'], query_camera = raw_query_camera)
         
         self.dd = None
@@ -190,7 +190,6 @@ class DualProcessTask:
         self.num_init_pose = default_confs['num_init_pose']
         self.padding = default_confs['padding']
         self.euler_angles, self.translation, self.origin = get_init(self.gt_pose, start = start )
-        self.origin = WGS84_to_ECEF([114.26043089616468,22.207854978330825,38.890188836725919])
         self.render_config['init_rot'], self.render_config['init_trans'] = self.euler_angles, self.translation
         default_confs['refine']['origin'] = self.origin
         self.gt_pose_dict = load_poses(self.gt_pose, origin = self.origin)
@@ -447,8 +446,6 @@ if __name__ == "__main__":
     config_file = args.config
     # name = 'DJI_20250612194903_0021_V'
     # config_file = '/home/ubuntu/Documents/code/github/FPV/PiLoT/configs/feicuiwan_m4t.yaml'
-    name = "interval1_HKisland_GNSS03"
-    config_file = "/home/ubuntu/Documents/code/github/FPV/PiLoT/configs/uav_scenes.yaml"
     
     with open(config_file, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)

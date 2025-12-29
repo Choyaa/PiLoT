@@ -190,7 +190,7 @@ if __name__ == "__main__":
     reference_depth_path = "/mnt/sda/MapScape/query/depth/USA_seq5@8@cloudy@300-100@200/1_1.png"
     query_rgb_path = "/mnt/sda/MapScape/query/depth/USA_seq5@8@cloudy@300-100@200/10_0.png"
     query_depth_path = "/mnt/sda/MapScape/query/depth/USA_seq5@8@cloudy@300-100@200/10_1.png"
-    pose_txt = "/media/ubuntu/PS20002/poses/USA_seq5@8@cloudy@300-100@200.txt"
+    pose_txt = "/media/ubuntu/PS2000/poses/USA_seq5@8@cloudy@300-100@200.txt"
     vis_save_path = "/mnt/sda/ycb/"
 
     pose_dict = load_poses(pose_txt)
@@ -258,13 +258,10 @@ if __name__ == "__main__":
     points2d_ref = np.array([[24, 54]])   
 
     points2d_ref_valid, point3D_from_ref, _, _ = get_3D_samples(points2d_ref, ref_depth_image, ref_T, rcamera)
-    print('3D points in WGS84:', ECEF_to_WGS84(point3D_from_ref[0]))
-    
-    points2d_ref, _, _, _ = get_points2D_ECEF_projection(np.array(ref_T), rcamera, point3D_from_ref, points2d_ref_valid, use_valid = False, num_samples=20000)
-    print('2D points on Ref: ', points2d_ref)
     
     points2d_query, _, Points_3D_ECEF_origin, valid = get_points2D_ECEF_projection(np.array(query_T), qcamera, point3D_from_ref, points2d_ref_valid, use_valid = False, num_samples=20000)
-    print('2D points on Query: ', points2d_query)
+    print(point3D_from_ref[0])
+    print(ECEF_to_WGS84(point3D_from_ref[0]))
     visualize_matches(rgb_image, ref_image, 
                     points2d_query, 
                     points2d_ref)

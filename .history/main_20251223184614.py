@@ -176,7 +176,7 @@ class DualProcessTask:
         else:
             self.img_list = glob.glob(img_path + "/*.png") + glob.glob(img_path + "/*.jpg") + glob.glob(img_path + "/*.JPG")
             self.img_list = sorted(self.img_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
-        start = 379
+        start = 0
         # end = 30
         self.img_list = self.img_list[start:400]
         self.query_list = read_image_list(self.img_list, scale = self.query_resize_ratio, distortion=cam_query['distortion'], query_camera = raw_query_camera)

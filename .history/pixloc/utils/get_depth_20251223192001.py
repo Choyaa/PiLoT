@@ -1282,11 +1282,11 @@ def generate_translations_grid(base_trans, max_x, step_x, max_y, step_y, max_z, 
         pos_range = torch.arange(step, max_val + step, step, device=device)  # 正方向
         return torch.cat([neg_range, pos_range])  # 拼接正负方向，并排除 0
     # 通过 create_range 计算 x, y, z 的平移范围
-    rang_x = create_range(max_x, step_x) + bx
-    rang_y = create_range(max_y, step_y) + by
+    # rang_x = create_range(max_x, step_x) + bx
+    # rang_y = create_range(max_y, step_y) + by
     # rang_z = create_range(max_z, step_z) + bz
-    # rang_X = torch.tensor([bx], device=device)
-    # rang_Y = torch.tensor([by], device=device)
+    rang_x = torch.tensor([bx], device=device)
+    rang_y = torch.tensor([by], device=device)
     rang_z = torch.tensor([bz], device=device)
     
     # 生成网格点 (meshgrid)
@@ -1335,8 +1335,8 @@ def get_3D_samples_v4(mkpts_r, depth_mat, T_c2w, camera,  query_euler_angles, qu
         query_translation_ECEF = WGS84_to_ECEF(query_translation)
         query_translations = generate_translations_grid(
         base_trans=query_translation_ECEF,
-        max_x=10, step_x=5,  # 示例: X轴左右各撒0.5，步长0.1
-        max_y=10, step_y=5,  # Y轴
+        max_x=0, step_x=5,  # 示例: X轴左右各撒0.5，步长0.1
+        max_y=0, step_y=5,  # Y轴
         max_z=0, step_z=1,  # Z轴
         device=query_euler_angles.device
         )

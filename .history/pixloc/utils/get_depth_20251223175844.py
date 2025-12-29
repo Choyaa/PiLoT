@@ -435,9 +435,6 @@ def generate_pitch_yaw_aa_and_random_t(pitch_angles_deg=[-10, -7, -4, -1, 1, 4, 
     return aa, trans
 def generate_rotvecs_cuda_sym3d(
     base_pitch, base_roll, base_yaw, 
-    max_pitch: float, pitch_step: float,
-    max_yaw:   float,   yaw_step:   float,
-    max_roll:  float,  roll_step:  float,
     device:   str = 'cuda'):
     """
     在 CUDA 上生成 (pitch, roll, yaw) 三维对称网格采样：
@@ -463,48 +460,12 @@ def generate_rotvecs_cuda_sym3d(
         # 此时 pitch_vals = [-10, -5, 0, 5, 10]，yaw_vals、roll_vals 同理
         # N = 5 * 5 * 5 = 125，所以 rotvecs.shape = [125, 3]
     """
-
-    # ------- 1. 针对每个维度，生成 [-max, +max] 等步长值 -------
-    def _symmetric_range(max_val: float, step: float) -> torch.Tensor:
-        """
-        生成一个对称采样向量：
-          如果 max_val == 0: 返回 tensor([0.0])
-          否则：采样 [-max_val, -max_val+step, ..., 0, ..., max_val-step, max_val]（包含正负两端）
-        """
-        if step <= 0 or max_val < 0:
-            raise ValueError("step 必须 > 0 且 max_val 必须 >= 0")
-        if max_val == 0:
-            return torch.tensor([0.0], device=device, dtype=torch.float32)
-
-        # torch.arange(start, end, step) 会生成 [start, start+step, ..., < end]
-        # 我们希望包含 -max_val 和 +max_val 两侧，先从 0 到 +max_val 再映射
-        pos = torch.arange(0.0, max_val + 1e-6, step, device=device, dtype=torch.float32)
-        # 如果 pos 的最后一个元素略大于 max_val（due to float 误差），可以 clamp
-        if pos[-1] > max_val:
-            pos[-1] = max_val
-
-        # 剔除第一个 0，生成正半区采样；0 在最中心单独出现一次
-        if pos.shape[0] > 1:
-            pos_nonzero = pos[1:]  # 跳过 0
-            # 负半区 = 正半区 取反并倒序，以保持顺序从小到大
-            neg = (-pos_nonzero).flip(0)
-            # 合并负、中、正
-            return torch.cat((neg, pos[:1], pos_nonzero), dim=0)
-        else:
-            # 只有一个元素 0
-            return pos
-
-    # pitch_vals = _symmetric_range(max_pitch, pitch_step)  # 形如 [ -max, ..., 0, ..., +max ]
-    # yaw_vals   = _symmetric_range(max_yaw,   yaw_step)
-    # roll_vals  = _symmetric_range(max_roll,  roll_step)
-    # pitch_vals = torch.tensor([15, 13, 11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11, -13, -15]).to(device)
-    # yaw_vals = torch.tensor([15, 13, 11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11, -13, -15]).to(device)
-    # roll_vals = torch.tensor([-1, 0, 1]).to(device)
     # pitch_vals = torch.tensor([5,4,3,2, 1, 0, -1, -2, -3, -4, -5]).to(device)
     # yaw_vals = torch.tensor([5,4,3,2, 1, 0, -1, -2, -3, -4, -5]).to(device)
-    
-    pitch_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
-    yaw_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
+    pitch_vals = torch.tensor([9, 7, 5, 3, 1, -1, -3, -5, -7, -9]).to(device)
+    yaw_vals = torch.tensor([9, 7, 5, 3, 1, -1, -3, -5, -7, -9]).to(device)
+    # pitch_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
+    # yaw_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
     # pitch_vals = torch.tensor([7, 5, 3, 1, -1, -3, -5, -7]).to(device)
     # yaw_vals = torch.tensor([7, 5, 3, 1, -1, -3, -5, -7]).to(device)
     # pitch_vals = torch.tensor([0]).to(device)
@@ -525,6 +486,53 @@ def generate_rotvecs_cuda_sym3d(
     # P_flat[0] = 0
     # R_flat[0] = 0
     # Y_flat[0] = 0
+    
+    pitch = P_flat + base_pitch
+    roll  = R_flat + base_roll
+    yaw   = Y_flat + base_yaw
+    # 拼成 (N,3)
+    return torch.stack((pitch, roll, yaw), dim=1)       # float tensor on GPU
+def generate_rotvecs_cuda_sym3d_only_yaw(
+    base_pitch, base_roll, base_yaw, 
+    device:   str = 'cuda'):
+    """
+    在 CUDA 上生成 (pitch, roll, yaw) 三维对称网格采样：
+      - pitch 从 -max_pitch 到 +max_pitch，步长为 pitch_step
+      - yaw   从 -max_yaw   到 +max_yaw，   步长为 yaw_step
+      - roll  从 -max_roll  到 +max_roll，  步长为 roll_step
+
+    如果某个 max = 0，则只在该维度采样 0；否则会在 [-max, +max] 区间内按照 step 生成序列，
+    包含正负两侧（如果 (2*max) 不是 step 的整数倍，则右边最后一个采样点会略小于 +max）。
+
+    返回张量形状为 [N, 3]，其中
+      N = num_pitch * num_yaw * num_roll，
+    每行即为一个 (pitch, roll, yaw) 三元组，dtype=float32 且在 CUDA 上。
+
+    示例：
+        # 在 [-10, +10] 以 5 度步长采样 pitch、yaw、roll
+        rotvecs = generate_rotvecs_cuda_sym3d(
+            max_pitch=10.0,  pitch_step=5.0,
+            max_yaw=10.0,    yaw_step=5.0,
+            max_roll=10.0,  roll_step=5.0,
+            device='cuda'
+        )
+        # 此时 pitch_vals = [-10, -5, 0, 5, 10]，yaw_vals、roll_vals 同理
+        # N = 5 * 5 * 5 = 125，所以 rotvecs.shape = [125, 3]
+    """
+    
+    # yaw_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
+    pitch_vals = torch.tensor([0]).to(device)
+    yaw_vals = torch.tensor([8, 6, 4, 2, 0, -2, -4, -6, -8]).to(device)
+    roll_vals = torch.tensor([0]).to(device)
+    # ------- 2. 使用 meshgrid 生成三维网格 -------
+    P, Y, R = torch.meshgrid(
+        pitch_vals, yaw_vals, roll_vals, indexing='ij'
+    )  # P.shape == (num_pitch, num_yaw, num_roll)
+    # ------- 3. 展平至 (N,) 并拼成 (N,3) -------
+    N = P.numel()
+    P_flat = P.reshape(N)
+    Y_flat = Y.reshape(N)
+    R_flat = R.reshape(N)
     
     pitch = P_flat + base_pitch
     roll  = R_flat + base_roll
@@ -759,21 +767,42 @@ def euler_to_rotm_batch(angles, translation, degrees=True, device='cuda'):
         torch.stack([torch.sin(y),  torch.cos(y), zero], dim=1),
         torch.stack([zero,          zero,         one ], dim=1),
     ], dim=1)
+    
+    euler = angles[0].cpu().numpy()
+    trans = translation
+    rot_pose_in_enu = R.from_euler('xyz', euler, degrees=False).as_matrix()  # ZXY 东北天  
+    rot_enu_in_ecef = get_rotation_enu_in_ecef(trans[0], trans[1])
+    R_c2w = np.matmul(rot_enu_in_ecef, rot_pose_in_enu)
 
     # 按顺序乘：R = ENU2ECEF @ Rz @ Rx @ Ry  （根据你的定义调整）
     # 假设 get_rotation_enu_in_ecef 返回 (3,3) CPU or GPU tensor:
+    
     lon, lat, _ = translation
     rot_enu_in_ecef = get_rotation_enu_in_ecef_tensor(lon, lat).to(device)
-    R_local = Rz @ Rx @ Ry                         # (N,3,3)
-    R_batch = rot_enu_in_ecef.unsqueeze(0) @ R_local  # (N,3,3)
+    R_local = Rz @ Ry @ Rx 
+    R_batch = rot_enu_in_ecef.unsqueeze(0) @ R_local
+    # R_local = Rz @ Rx @ Ry                         # (N,3,3)
+    # R_batch = rot_enu_in_ecef.unsqueeze(0) @ R_local  # (N,3,3)
     return R_batch
-
+def euler_angles_to_matrix_ECEF_batch_special_cuda_v4(euler_angles, translation, center_pose,
+                                              device='cuda'):
+    # euler_angles: (N,3) GPU tensor; translation: (3,) CPU or GPU
+    R_batch = euler_to_rotm_batch(euler_angles, center_pose, degrees=True, device=device)
+    # t_c2w = WGS84_to_ECEF_tensor(translation)
+    # t = torch.tensor(translation, device=device, dtype=torch.float32)  # (3,)
+    N = R_batch.shape[0]
+    # 拼成 (N,4,4)
+    T = torch.eye(4, device=device).unsqueeze(0).repeat(N,1,1)         # (N,4,4)
+    T[:, :3, :3] = R_batch
+    T[:, :3,  3] = translation
+    return T  # (N,4,4) GPU tensor
 def euler_angles_to_matrix_ECEF_batch_special_cuda(euler_angles, translation,
                                               device='cuda'):
     # euler_angles: (N,3) GPU tensor; translation: (3,) CPU or GPU
     euler_angles = torch.tensor(euler_angles).to(device)
     translation = torch.tensor(translation).to(device)
     R_batch = euler_to_rotm_batch(euler_angles, translation, degrees=True, device=device)
+    
     t_c2w = WGS84_to_ECEF_tensor(translation)
     t = torch.tensor(t_c2w, device=device, dtype=torch.float32)  # (3,)
     N = R_batch.shape[0]
@@ -1125,7 +1154,7 @@ def get_3D_samples_v2(mkpts_r, depth_mat, T_c2w, camera, euler_angles, translati
     # print('seed 5: ', end_time5 - start_time)
     return Points_3D_ECEF_origin_center, T_render.float(), initial_poses_w2c.float(), dd
 
-def get_3D_samples_v3(mkpts_r, depth_mat, T_c2w, camera, euler_angles, translation,  query_euler_angles, query_translation, last_frame_info = {}, origin = None, device = 'cuda', num_init_pose = 32, T_query_in_ECEF_c2w = None, mul = None):
+def get_3D_samples_v3(mkpts_r, depth_mat, T_c2w, camera, query_euler_angles, query_translation, last_frame_info = {}, origin = None, device = 'cuda', num_init_pose = 32, T_query_in_ECEF_c2w = None, mul = None):
     '''
     1. 欧拉角转R， 经纬高转xyz
     2. preprocess_param， [:3, 1] = -[:3, 1], [:3, 2] = - [:3, 2]
@@ -1138,13 +1167,7 @@ def get_3D_samples_v3(mkpts_r, depth_mat, T_c2w, camera, euler_angles, translati
     # print(' euler: ', euler_angles, query_euler_angles)
     query_euler_angles = generate_rotvecs_cuda_sym3d( base_pitch = query_euler_angles[0], base_roll=query_euler_angles[1], base_yaw=query_euler_angles[2], max_pitch=15.0, pitch_step=2.0, max_yaw=15.0,yaw_step=2.0, max_roll=1.0, roll_step=1.0)
     
-    # query_euler_angles = generate_rotvecs_cuda_sym3d( base_pitch = euler_angles[0], base_roll=euler_angles[1], base_yaw=euler_angles[2], max_pitch=15.0, pitch_step=2.0, max_yaw=15.0,yaw_step=2.0, max_roll=1.0, roll_step=1.0)
-    # for ii in range(len(query_euler_angles)):
-    #     print(ii, query_euler_angles[ii])
-    # query_euler_angles = generate_rotvecs_cuda(pitch_angles = [-7, -5, -3, -1, 1, 3, 5, 7], yaw_angles  = [-7, -5, -3, -1, 1, 3, 5, 7], base_pitch = euler_angles[0], base_roll=euler_angles[1], base_yaw=euler_angles[2])
-    # query_euler_angles = generate_rotvecs_cuda(pitch_angles = [-10, -7, -4, -1, 1, 4, 7, 10], yaw_angles  = [-10, -7, -4, -1, 1, 4, 7, 10], base_pitch = euler_angles[0], base_roll=euler_angles[1], base_yaw=euler_angles[2])
-    
-    query_T_c2w = euler_angles_to_matrix_ECEF_batch_special_cuda(query_euler_angles, translation)
+    query_T_c2w = euler_angles_to_matrix_ECEF_batch_special_cuda(query_euler_angles, query_translation)
     # end_time1 = time.time()
     # print('seed: ', end_time1 - start_time)
     # start_time = time.time()
@@ -1240,6 +1263,175 @@ def get_3D_samples_v3(mkpts_r, depth_mat, T_c2w, camera, euler_angles, translati
     # end_time5 = time.time()
     # print('seed 5: ', end_time5 - start_time)
     return Points_3D_ECEF_origin_center, T_render, initial_poses_w2c, dd
+def generate_translations_grid(base_trans, max_x, step_x, max_y, step_y, max_z, step_z, device='cuda'):
+    """
+    生成平移向量的网格 (不包含零点)
+    base_trans: [3] tensor or list, basic (x, y, z) 平移基础向量
+    max_x, step_x: x轴的最大值和步长
+    max_y, step_y: y轴的最大值和步长
+    max_z, step_z: z轴的最大值和步长
+    device: 计算设备 (cuda 或 cpu)
+    """
+    bx, by, bz = base_trans[0], base_trans[1], base_trans[2]
+    # 修改后的辅助函数，生成范围且排除0
+    def create_range(max_val, step):
+        if max_val == 0 or step <= 0:
+            return torch.tensor([], device=device)  # 没有平移时，返回空数组
+        # 生成范围 (不包含 0)
+        neg_range = torch.arange(-max_val, 0, step, device=device)  # 负方向
+        pos_range = torch.arange(step, max_val + step, step, device=device)  # 正方向
+        return torch.cat([neg_range, pos_range])  # 拼接正负方向，并排除 0
+    # 通过 create_range 计算 x, y, z 的平移范围
+    rang_x = create_range(max_x, step_x) + bx
+    rang_y = create_range(max_y, step_y) + by
+    # rang_z = create_range(max_z, step_z) + bz
+    rang_z = torch.tensor([bz], device=device)
+    
+    # 生成网格点 (meshgrid)
+    grid_x, grid_y, grid_z = torch.meshgrid(rang_x, rang_y, rang_z, indexing='ij')
+    # 堆叠并展平为形状 [M, 3]
+    query_translations = torch.stack([grid_x, grid_y, grid_z], dim=-1).reshape(-1, 3)
+    return query_translations
+def generate_translations_grid_zero(base_trans, max_x, step_x, max_y, step_y, max_z, step_z, device='cuda'):
+    """
+    生成平移向量的网格
+    base_trans: [3] tensor or list, basic (x, y, z)
+    """
+    bx, by, bz = base_trans[0], base_trans[1], base_trans[2]
+    # 1. 生成各轴的偏差范围 (例如: -0.5, -0.3, ..., 0.3, 0.5)
+    # create_range 辅助函数确保包含 0 点 (原始位置)
+    def create_range(max_val, step):
+        if max_val == 0 or step <= 0:
+            return torch.tensor([0.0], device=device)
+        # 生成从 -max 到 +max 的序列
+        return torch.arange(-max_val, max_val + 1e-6, step, device=device)
+    rang_x = create_range(max_x, step_x) + bx
+    rang_y = create_range(max_y, step_y) + by
+    rang_z = create_range(max_z, step_z) + bz
+    # 2. 生成网格 (Meshgrid)
+    grid_x, grid_y, grid_z = torch.meshgrid(rang_x, rang_y, rang_z, indexing='ij')
+    # 3. 堆叠并展平 -> Shape: [M, 3]
+    query_translations = torch.stack([grid_x, grid_y, grid_z], dim=-1).reshape(-1, 3)
+    return query_translations
+def get_3D_samples_v4(mkpts_r, depth_mat, T_c2w, camera,  query_euler_angles, query_translation, last_frame_info = {}, origin = None, device = 'cuda', mul = None, is_init_frame = True):
+    '''
+    1. 欧拉角转R， 经纬高转xyz
+    2. preprocess_param， [:3, 1] = -[:3, 1], [:3, 2] = - [:3, 2]
+    3. * mul
+    4. -origin
+    5. -dd
+    6. 加噪*
+    '''
+    # ================= 如果是初始帧 =================
+    if is_init_frame:
+        query_euler_angles = generate_rotvecs_cuda_sym3d_only_yaw(
+        base_pitch=query_euler_angles[0],
+        base_roll=query_euler_angles[1],
+        base_yaw=query_euler_angles[2]
+        )
+        
+        query_translation_ECEF = WGS84_to_ECEF(query_translation)
+        query_translations = generate_translations_grid(
+        base_trans=query_translation_ECEF,
+        max_x=10, step_x=5,  # 示例: X轴左右各撒0.5，步长0.1
+        max_y=10, step_y=5,  # Y轴
+        max_z=0, step_z=1,  # Z轴
+        device=query_euler_angles.device
+        )
+        
+    # ================= 如果不是初始帧 =================
+    else:
+        query_euler_angles = generate_rotvecs_cuda_sym3d(
+        base_pitch=query_euler_angles[0],
+        base_roll=query_euler_angles[1],
+        base_yaw=query_euler_angles[2]
+        )
+        
+        query_translation_ECEF = WGS84_to_ECEF(query_translation)
+        query_translation_ECEF = torch.tensor(query_translation_ECEF, device=device, dtype=torch.float32)
+        query_translations = query_translation_ECEF.reshape(1,3)
+    M = query_translations.shape[0]
+    N = query_euler_angles.shape[0]
+    # ================= 3. 组合 (笛卡尔积) =================
+    # 总数量将变成 N * M。
+    # 复制旋转：[R1, R2] -> [R1, R1, R2, R2] (假设 M=2)
+    # repeat_interleave 会把每个元素重复 M 次
+    query_euler_angles_expanded = query_euler_angles.repeat_interleave(M, dim=0)
+    # 复制平移：[T1, T2] -> [T1, T2, T1, T2] (重复整个块 N 次)
+    # repeat 会把整个 Tensor 重复 N 次
+    query_translations_expanded = query_translations.repeat(N, 1)
+
+    # ================= 4.以此计算矩阵 =================
+    center_pose = query_translation
+    query_T_c2w = euler_angles_to_matrix_ECEF_batch_special_cuda_v4(
+    query_euler_angles_expanded,
+    query_translations_expanded,
+    center_pose
+    )
+
+    query_T_c2w[:, :3, 1] = -query_T_c2w[:, :3, 1]  # Y轴取反，投影后二维原点在左上角
+    query_T_c2w[:, :3, 2] = -query_T_c2w[:, :3, 2]  # Z轴取反
+
+    # preprocess
+    render_camera, render_T = preprocess_param_cuda(copy.deepcopy(camera), copy.deepcopy(T_c2w))
+    cx, cy = render_camera.c
+    fx, fy = render_camera.f
+    render_K = torch.tensor([[fx, 0, cx],[0, fy, cy], [0, 0, 1]],device=device)
+    K_c2w = render_K.inverse()
+    
+    render_T = torch.tensor(render_T, device=device)
+    mkpts_r = torch.tensor(mkpts_r, device=device)
+
+    depth, valid = read_valid_depth(mkpts_r, depth = depth_mat, device=device)
+
+    # Compute 3D points
+    Points_3D_ECEF = get_Points3D_torch_cuda(
+        depth,
+        render_T[:3, :3],
+        render_T[:3, 3],
+        K_c2w,
+        mkpts_r[valid])
+
+    if mul is not None:
+        Points_3D_ECEF = Points_3D_ECEF * mul
+        render_T[:3, 3] = render_T[:3, 3] * mul
+        origin = origin*mul
+        query_T_c2w[:, :3, 3] = query_T_c2w[:, :3, 3] * mul
+
+    # origin 
+    if origin is None:
+        origin = Points_3D_ECEF[0]
+    Points_3D_ECEF_origin = Points_3D_ECEF - origin
+
+    render_T[:3, 3] -= origin  # t_c2w - origin
+    render_T_c2w = Pose.from_Rt(render_T[:3, :3], render_T[:3, 3])  # w2c
+    T_render = render_T_c2w.inv().float()
+
+    query_T_c2w[:, :3, 3] -= origin
+    T_query = Pose.from_Rt(query_T_c2w[:, :3, :3], query_T_c2w[:, :3, 3]).inv()  # w2c
+    
+    center = False
+    if center:
+        points3D_total = Points_3D_ECEF_origin
+        points_max = points3D_total.max(dim=0)[0]
+        points_min = points3D_total.min(dim=0)[0]
+        points_size = points_max - points_min
+        dd = points_min + points_size / 2
+        Points_3D_ECEF_origin_center = points3D_total - dd
+
+        tt = T_render.t + T_render.R @ dd
+        T_render = Pose.from_Rt(T_render.R, tt)
+
+        tt = T_query.t + T_query.R @ dd
+        T_query = Pose.from_Rt(T_query.R, tt)
+
+    else:
+        points3D_total = Points_3D_ECEF_origin
+        Points_3D_ECEF_origin_center = points3D_total
+        dd = torch.tensor([0,0,0])
+
+
+    return Points_3D_ECEF_origin_center, T_render, T_query, dd
 def generate_render_camera(camera):
     if len(camera) == 5:
         image_width_px, image_height_px, sensor_width_mm, sensor_height_mm, f_mm = camera

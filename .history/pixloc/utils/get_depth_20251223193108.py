@@ -522,7 +522,8 @@ def generate_rotvecs_cuda_sym3d_only_yaw(
     
     # yaw_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
     pitch_vals = torch.tensor([0]).to(device)
-    yaw_vals = torch.tensor([8, 6, 4, 2, 0, -2, -4, -6, -8]).to(device)
+    # yaw_vals = torch.tensor([8, 6, 4, 2, 0, -2, -4, -6, -8]).to(device)
+    yaw_vals = torch.tensor([0]).to(device)
     roll_vals = torch.tensor([0]).to(device)
     # ------- 2. 使用 meshgrid 生成三维网格 -------
     P, Y, R = torch.meshgrid(
@@ -1282,11 +1283,11 @@ def generate_translations_grid(base_trans, max_x, step_x, max_y, step_y, max_z, 
         pos_range = torch.arange(step, max_val + step, step, device=device)  # 正方向
         return torch.cat([neg_range, pos_range])  # 拼接正负方向，并排除 0
     # 通过 create_range 计算 x, y, z 的平移范围
-    rang_x = create_range(max_x, step_x) + bx
-    rang_y = create_range(max_y, step_y) + by
+    # rang_x = create_range(max_x, step_x) + bx
+    # rang_y = create_range(max_y, step_y) + by
     # rang_z = create_range(max_z, step_z) + bz
-    # rang_X = torch.tensor([bx], device=device)
-    # rang_Y = torch.tensor([by], device=device)
+    rang_x = torch.tensor([bx], device=device)
+    rang_y = torch.tensor([by], device=device)
     rang_z = torch.tensor([bz], device=device)
     
     # 生成网格点 (meshgrid)

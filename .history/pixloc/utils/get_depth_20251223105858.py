@@ -462,10 +462,9 @@ def generate_rotvecs_cuda_sym3d(
     """
     # pitch_vals = torch.tensor([5,4,3,2, 1, 0, -1, -2, -3, -4, -5]).to(device)
     # yaw_vals = torch.tensor([5,4,3,2, 1, 0, -1, -2, -3, -4, -5]).to(device)
-    pitch_vals = torch.tensor([9, 7, 5, 3, 1, -1, -3, -5, -7, -9]).to(device)
-    yaw_vals = torch.tensor([9, 7, 5, 3, 1, -1, -3, -5, -7, -9]).to(device)
-    # pitch_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
-    # yaw_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
+    
+    pitch_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
+    yaw_vals = torch.tensor([11, 9, 7, 5, 3, 1, -1, -3, -5, -7, -9, -11]).to(device)
     # pitch_vals = torch.tensor([7, 5, 3, 1, -1, -3, -5, -7]).to(device)
     # yaw_vals = torch.tensor([7, 5, 3, 1, -1, -3, -5, -7]).to(device)
     # pitch_vals = torch.tensor([0]).to(device)
@@ -1285,8 +1284,6 @@ def generate_translations_grid(base_trans, max_x, step_x, max_y, step_y, max_z, 
     rang_x = create_range(max_x, step_x) + bx
     rang_y = create_range(max_y, step_y) + by
     # rang_z = create_range(max_z, step_z) + bz
-    # rang_X = torch.tensor([bx], device=device)
-    # rang_Y = torch.tensor([by], device=device)
     rang_z = torch.tensor([bz], device=device)
     
     # 生成网格点 (meshgrid)
@@ -1325,6 +1322,7 @@ def get_3D_samples_v4(mkpts_r, depth_mat, T_c2w, camera,  query_euler_angles, qu
     6. 加噪*
     '''
     # ================= 如果是初始帧 =================
+    is_init_frame = False
     if is_init_frame:
         query_euler_angles = generate_rotvecs_cuda_sym3d_only_yaw(
         base_pitch=query_euler_angles[0],
