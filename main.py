@@ -1,468 +1,460 @@
-import torch.multiprocessing as mp
-mp.set_start_method("spawn", force=True)     # Linux 默认 fork → 改成 spawn
-from this import d
-import threading
-from pixloc.utils.data import Paths
+#!/usr/bin/env python3
+"""PiLoT: Neural Pixel-to-3D Registration for UAV-based Ego and Target Geo-localization
+
+Entry script for running localization via shell scripts.
+"""
+import argparse
+import glob
+import logging
 import os
 import queue
-import glob
-import cv2
-import setproctitle
 import shutil
-import tkinter as tk
-import argparse
-import ast
-import numpy as np
-from tqdm import tqdm
-from pprint import pformat
-from pixloc.pixlib.geometry import Camera, Pose
-from pixloc.utils.eval import evaluate_xyz, evaluate_XYZ_EULER
-from pixloc.utils.get_depth import get_3D_samples_v3, pad_to_multiple, generate_render_camera, get_3D_samples_v4
-from pixloc.utils.transform import euler_angles_to_matrix_ECEF, pixloc_to_osg, WGS84_to_ECEF,get_sorted_image_paths_uavscenes
-from pixloc.utils import video_generation
-from pixloc.pixlib.datasets.view import read_image_list
-from preprocess.vis_traj import TrajectoryDrawer
 import time
-import yaml
-import copy
-import logging
+from multiprocessing import Event, Queue
+from pprint import pformat
+from typing import Any, Dict, List, Optional, Tuple
+
+import cv2
+import numpy as np
+import setproctitle
 import torch
-from multiprocessing import Process, Queue, Event
+import torch.multiprocessing as mp
+import yaml
+
+from pixloc.localization import target_indicator
+from pixloc.pixlib.datasets.view import read_image_list
+from pixloc.pixlib.geometry import Camera
+from pixloc.utils.eval import evaluate_pose, evaluate_target
+from pixloc.utils.get_depth import (
+    generate_render_camera,
+    pad_to_multiple,
+    sample_3d_points,
+)
+from pixloc.utils.transform import (
+    euler_angles_to_matrix_ECEF,
+    get_sorted_image_paths_uavscenes,
+)
+from src.utils.pose_utils import (
+    load_initial_pose,
+    load_pose_dict,
+    load_target_points,
+)
+
+mp.set_start_method("spawn", force=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(processName)s] %(message)s",
-    datefmt="%H:%M:%S")
-'''
-1. config init rot, init translation, datapath
-'''
-def get_init(pose_file,start = 0):
-    cnt = 0
-    with open(pose_file, 'r') as file:
-        for line in file:
-            # Remove leading/trailing whitespace and split the line
-            parts = line.strip().split()
-            if parts:  # Ensure the line is not empty
-                # if '14000' in parts[0]:
-                if cnt != start: 
-                    cnt += 1
-                    continue
-                # pose_dict[parts[0]] = parts[1: ]  # Add the first element to the name list
-                lon, lat, alt, roll, pitch, yaw = map(float, parts[1: ])
-                # pitch, roll, yaw, lon, lat, alt,  = map(float, parts[1: ])
-                
-                euler_angles = [pitch, roll, yaw]
-                translation = [lon, lat, alt]
-                origin = WGS84_to_ECEF(translation)
-                break
-    return euler_angles, translation, origin
-def vstack_images(img_top, img_bottom, target_width=None):
-    """将两个图像在垂直方向拼接，并自动调整宽度一致。"""
-    # 自动设定统一宽度为上图宽度
-    if target_width is None:
-        target_width = img_top.shape[1]
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
-    # 统一 resize 宽度
-    def resize_to_width(img, w):
-        h = int(img.shape[0] * (w / img.shape[1]))
-        return cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
 
-    top_resized = resize_to_width(img_top, target_width)
-    bottom_resized = resize_to_width(img_bottom, target_width)
+class DualProcessTask:
+    """Manages rendering and localization in two parallel processes."""
 
-    return np.vstack([top_resized, bottom_resized])
-def load_poses(pose_file, origin = None):
-    """Load poses from the pose file."""
-    pose_dict = {}
-    translation_list = []
-    euler_angles_list = []
-    name_list = []
-    init_euler = None
-    init_trans = None
-    with open(pose_file, 'r') as file:
-        for line in file:
-            # Remove leading/trailing whitespace and split the line
-            parts = line.strip().split()
-            if parts:  # Ensure the line is not empty
-                # pose_dict[parts[0]] = parts[1: ]  # Add the first element to the name list
-                lon, lat, alt, roll, pitch, yaw = map(float, parts[1: ])
-                translation_list.append([lon, lat, alt])
-                euler_angles_list.append([pitch, roll, yaw])
-                if '_' not in parts[0]:
-                    name = parts[0][:-4] +'_0.png'
-                else:
-                    name = parts[0]
-                name_list.append(name)
-                euler_angles = [pitch, roll, yaw]
-                translation = [lon, lat, alt]
-                T_in_ECEF_c2w = euler_angles_to_matrix_ECEF(euler_angles, translation)
-                pose_dict[name] = {}
-                pose_dict[name]['T_w2c_4x4'] = copy.deepcopy(T_in_ECEF_c2w)
-                T_in_ECEF_c2w[:3, 1] = -T_in_ECEF_c2w[:3, 1]  # Y轴取反，投影后二维原点在左上角
-                T_in_ECEF_c2w[:3, 2] = -T_in_ECEF_c2w[:3, 2]  # Z轴取反
-                T_in_ECEF_c2w[:3, 3] -= origin  # t_c2w - origin
-                render_T_w2c = np.eye(4)
-                render_T_w2c[:3, :3] = T_in_ECEF_c2w[:3, :3].T
-                render_T_w2c[:3, 3] = -T_in_ECEF_c2w[:3, :3].T @ T_in_ECEF_c2w[:3, 3]
-                
-                
-                pose_dict[name]['euler'] = [pitch, roll, yaw]
-                pose_dict[name]['trans'] = [lon, lat, alt]
-                
-                
-                render_T_w2c = Pose.from_Rt(render_T_w2c[:3, :3], render_T_w2c[:3, 3])
-                pose_dict[name]['T_w2c'] = render_T_w2c.to_flat()
-    return pose_dict
-
-class DualProcessTask:        
-    def __init__(self, config, init_euler = None, init_trans = None, name = None):
-        # 用 multiprocessing 队列/事件
-        self.task_q   = Queue(maxsize=2)     # 渲染 → 定位
-        self.pose_q   = Queue(maxsize=3)     # 定位 → 渲染
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        name: Optional[str] = None,
+    ) -> None:
+        self.task_q: Queue = Queue(maxsize=2)
+        self.pose_q: Queue = Queue(maxsize=3)
         self.stop_evt = Event()
+
         self.render_config = config["render_config"]
-        default_confs = config["default_confs"] 
-        self.conf = default_confs['from_render_test'] # from_render_test
-        # conf初始化
-        folder_path = default_confs['dataset_path']
-        dataset_name = default_confs['dataset_name']
-        output_name = default_confs['dataset_name']
-        # self.euler_angles, self.translation = self.render_config['init_rot'], self.render_config['init_trans']
-        
-        if name is not None:
-            dataset_name = name
-            output_name = name
-        # if init_euler is not None:
- 
-        self.refine_conf = default_confs['refine']
-        self.mul = self.refine_conf['mul']
-        # self.estimated_pose = os.path.join(folder_path, 'estimation', 'FPVLoc@'+output_name +'.txt') #'FPVLoc@'+ dataset_name +'.txt'
-        # output_folder = "/mnt/sda/MapScape/query/estimation/result_images/FPVLoc"
+        default_confs = config["default_confs"]
+        self.conf = default_confs["from_render_test"]
+
+        folder_path = default_confs["dataset_path"]
+        dataset_name = name or default_confs["dataset_name"]
+
+        self.refine_conf = default_confs["refine"]
+        self.mul = self.refine_conf["mul"]
+
+        # Output directories
         output_folder = "outputs"
-        self.outputs = os.path.join(output_folder, output_name)
-        if not os.path.exists(self.outputs):
-            os.makedirs(self.outputs)
-        else:
+        self.outputs = os.path.join(output_folder, dataset_name)
+        if os.path.exists(self.outputs):
             shutil.rmtree(self.outputs)
-            os.makedirs(self.outputs)
-        
-        self.gt_pose = os.path.join(folder_path, 'poses', dataset_name +'.txt') #
-        self.estimated_pose = os.path.join(output_folder, output_name +'.txt') #'FPVLoc@'+ dataset_name +'.txt'
-        
-        
-        self.last_frame_info = {}
-        self.last_frame_info['observations'] = []
-        self.last_frame_info['refine_conf'] = self.refine_conf
-        
-        print(f'conf:\n{pformat(self.conf)}')
-        # 初始化先验位姿和内参
-        self.name_q = None
-        # camera
-        self.query_resize_ratio = default_confs['cam_query']['width'] / default_confs['cam_query']['max_size']
-        fx, fy, cx, cy = default_confs['cam_query']['params'] 
-        w, h = default_confs['cam_query']['width'], default_confs['cam_query']['height']
-        
-        raw_query_camera = np.array([w, h, cx, cy, fx, fy])
-        self.render_camera_osg = raw_query_camera / self.query_resize_ratio
-        
-        default_confs['cam_query']['params']  = np.array(default_confs['cam_query']['params']) / self.query_resize_ratio
-        default_confs['cam_query']['width'], default_confs['cam_query']['height'] = default_confs['cam_query']['width'] / self.query_resize_ratio, default_confs['cam_query']['height']/self.query_resize_ratio
-        cam_query = default_confs["cam_query"]
-        self.query_camera = Camera.from_colmap(cam_query) #! 2.
-        
-        img_path = os.path.join(folder_path, 'images', dataset_name)
-        if 'interval' in dataset_name:
-           self.img_list = get_sorted_image_paths_uavscenes(img_path)
-        else:
-            self.img_list = glob.glob(img_path + "/*.png") + glob.glob(img_path + "/*.jpg") + glob.glob(img_path + "/*.JPG")
-            self.img_list = sorted(self.img_list, key=lambda x: int(x.split('/')[-1].split('.')[0]))
-        start = 379
-        # end = 30
-        self.img_list = self.img_list[start:400]
-        self.query_list = read_image_list(self.img_list, scale = self.query_resize_ratio, distortion=cam_query['distortion'], query_camera = raw_query_camera)
-        
-        self.dd = None
-        self.name_r = None
+        os.makedirs(self.outputs)
 
-        self.render_camera = generate_render_camera(self.render_camera_osg).float()
-        self.render_config['render_camera'] = self.render_camera_osg 
-        # 是否padding, num init  pose
-        self.num_init_pose = default_confs['num_init_pose']
-        self.padding = default_confs['padding']
-        self.euler_angles, self.translation, self.origin = get_init(self.gt_pose, start = start )
-        self.origin = WGS84_to_ECEF([114.26043089616468,22.207854978330825,38.890188836725919])
-        self.render_config['init_rot'], self.render_config['init_trans'] = self.euler_angles, self.translation
-        default_confs['refine']['origin'] = self.origin
-        self.gt_pose_dict = load_poses(self.gt_pose, origin = self.origin)
-        
-        self.device = 'cuda'
+        # Ground-truth paths
+        self.gt_pose_path = os.path.join(
+            folder_path, "poses", dataset_name + ".txt"
+        )
+        self.gt_target_xy_path = os.path.join(
+            folder_path, "bbox", dataset_name, dataset_name + "_xy.txt"
+        )
+        self.gt_rtk_path = os.path.join(
+            folder_path, "target_RTK", dataset_name + "_RTK.txt"
+        )
+
+        # Estimation output paths
+        self.estimated_pose_path = os.path.join(
+            output_folder, dataset_name + ".txt"
+        )
+        self.estimated_target_path = os.path.join(
+            output_folder, dataset_name + "_xyz.txt"
+        )
+
+        self.last_frame_info: Dict[str, Any] = {
+            "observations": [],
+            "refine_conf": self.refine_conf,
+        }
+
+        logger.info("Configuration:\n%s", pformat(self.conf))
+
+        self._setup_camera(default_confs)
+        self._setup_images(folder_path, dataset_name, default_confs)
+        self._setup_poses(default_confs)
+
+        self.device = "cuda"
         self.origin = torch.tensor(self.origin, device=self.device)
-        self.query_camera, self.render_camera = self.query_camera.to(self.device), self.render_camera.to(self.device)
+        self.query_camera = self.query_camera.to(self.device)
+        self.render_camera = self.render_camera.to(self.device)
 
-        self.pose_q.put_nowait((self.euler_angles, self.translation, str(start)+'.png', None, None))
-        self.pose_q.put_nowait((self.euler_angles, self.translation, str(start)+'.png', None, None))
-        
-        lon0, lat0, alt0 = self.translation 
+        # Seed the render queue with the initial pose
+        init_tag = "0_init.png"
+        self.pose_q.put_nowait(
+            (self.euler_angles, self.translation, init_tag, None)
+        )
+        self.pose_q.put_nowait(
+            (self.euler_angles, self.translation, init_tag, None)
+        )
+        self.localizer = target_indicator.QueryLocalizer()
 
-        self.traj = TrajectoryDrawer(lon0, lat0, alt0)
-    
-    # ---------------- 渲染线程 ----------------        
-    def rendering_worker(self):
-        import torch
+    # -- Setup helpers --------------------------------------------------------
+
+    def _setup_camera(self, default_confs: Dict[str, Any]) -> None:
+        """Initialize query and render cameras."""
+        cam_cfg = default_confs["cam_query"]
+        self.query_resize_ratio = cam_cfg["width"] / cam_cfg["max_size"]
+
+        fx, fy, cx, cy = cam_cfg["params"]
+        w, h = cam_cfg["width"], cam_cfg["height"]
+
+        self.raw_query_camera = np.array([w, h, cx, cy, fx, fy])
+        self.render_camera_osg = self.raw_query_camera / self.query_resize_ratio
+
+        cam_cfg["params"] = (
+            np.array(cam_cfg["params"]) / self.query_resize_ratio
+        )
+        cam_cfg["width"] /= self.query_resize_ratio
+        cam_cfg["height"] /= self.query_resize_ratio
+
+        self.query_camera = Camera.from_colmap(cam_cfg)
+        self.render_camera = generate_render_camera(
+            self.render_camera_osg
+        ).float()
+        self.render_config["render_camera"] = self.render_camera_osg
+
+    def _setup_images(
+        self,
+        folder_path: str,
+        dataset_name: str,
+        default_confs: Dict[str, Any],
+    ) -> None:
+        """Build the ordered image list and pre-load query tensors."""
+        img_path = os.path.join(folder_path, "images", dataset_name)
+
+        if "interval" in dataset_name:
+            self.img_list = get_sorted_image_paths_uavscenes(img_path)
+        else:
+            self.img_list = sorted(
+                glob.glob(os.path.join(img_path, "*.png"))
+                + glob.glob(os.path.join(img_path, "*.jpg"))
+                + glob.glob(os.path.join(img_path, "*.JPG")),
+                key=lambda p: int(os.path.basename(p).split(".")[0]),
+            )
+        # self.img_list = self.img_list[:10]
+        cam_cfg = default_confs["cam_query"]
+        self.query_list = read_image_list(
+            self.img_list,
+            scale=self.query_resize_ratio,
+            distortion=cam_cfg["distortion"],
+            query_camera=self.raw_query_camera,
+        )
+
+    def _setup_poses(self, default_confs: Dict[str, Any]) -> None:
+        """Load initial pose, ground-truth poses and target points."""
+        self.num_init_pose = default_confs["num_init_pose"]
+        self.padding = default_confs["padding"]
+
+        self.euler_angles, self.translation, self.origin = load_initial_pose(
+            self.gt_pose_path,
+        )
+
+        self.render_config["init_rot"] = self.euler_angles
+        self.render_config["init_trans"] = self.translation
+        default_confs["refine"]["origin"] = self.origin
+
+        self.gt_pose_dict = load_pose_dict(
+            self.gt_pose_path, origin=self.origin
+        )
+        self.target_xy_dict = load_target_points(self.gt_target_xy_path)
+
+    # -- Workers --------------------------------------------------------------
+
+    def rendering_worker(self) -> None:
+        """Process that renders images and computes target locations."""
         from pixloc.utils.osg import osg_render
-        setproctitle.setproctitle('PiLoT_Render')
-        renderer      = osg_render.RenderImageProcessor(self.render_config)
+
+        setproctitle.setproctitle("PiLoT_Render")
+        renderer = osg_render.RenderImageProcessor(self.render_config)
         render_stream = torch.cuda.Stream()
         torch.cuda.synchronize()
-        fps_log_every = 0
-        idx = 0
-        
+
+        target_results: List[str] = []
+
         while True:
             try:
-                item = self.pose_q.get(timeout=1)     # <—— 带超时
+                item = self.pose_q.get(timeout=1)
             except queue.Empty:
-                if self.stop_evt.is_set():            # 有人喊停就走
+                if self.stop_evt.is_set():
                     break
                 continue
-            if item is None:                          # 对称哨兵
+
+            if item is None:
                 break
-            euler, trans,qname, query_img, fps = item
-            # ---- 1) 测渲染耗时 ----
-            t0 = time.perf_counter()
-            
+
+            euler, trans, qname, _fps = item
+
             with torch.cuda.stream(render_stream):
-                for _ in range(5):  # 如果需要 Near/Far 收敛
+                for _ in range(20):
                     renderer.update_pose(trans, euler)
                 color = renderer.get_color_image()
                 depth = renderer.get_depth_image()
-            renderer.save_color_image(os.path.join(self.outputs, qname))  
-            
+
             torch.cuda.current_stream().synchronize()
+
+            if "init" not in qname:
+                target_pt = (
+                    np.array(self.target_xy_dict[qname])
+                    / self.query_resize_ratio
+                )
+                ret = self.localizer.get_target_location(
+                    target_pt, [trans, euler], depth, self.render_camera,
+                )
+                pt3d = ret[1][0]
+                pt2d = (int(target_pt[0][0]), int(target_pt[0][1]))
+
+                color_bgr = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
+                cv2.circle(
+                    color_bgr, pt2d, radius=6,
+                    color=(0, 0, 255), thickness=-1,
+                )
+                label = f"[{pt3d[0]:.6f}, {pt3d[1]:.6f}, {pt3d[2]:.1f}]"
+                cv2.putText(
+                    color_bgr, label,
+                    (pt2d[0] + 10, pt2d[1] - 10),
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=0.6, color=(0, 255, 0),
+                    thickness=2, lineType=cv2.LINE_AA,
+                )
+                cv2.imwrite(os.path.join(self.outputs, qname), color_bgr)
+                target_results.append(
+                    f"{qname} {' '.join(map(str, pt3d))}"
+                )
 
             if self.padding:
                 color = pad_to_multiple(color, 16)
-            # ---- 3) 打印结果 ----
-            fps_log_every+=1
 
             try:
-                self.task_q.put((color,depth, euler, trans), timeout=1)
+                self.task_q.put((color, depth, euler, trans), timeout=1)
             except queue.Full:
-                break                       # 定位端不再消费，直接收尾
-        self.stop_evt.set()
-        self.task_q.put(None)               # 给 localization_worker 的哨兵
-        self.task_q.close(); self.task_q.join_thread()
-        self.pose_q.close(); self.pose_q.join_thread()
-        logging.info('Render process done')
-   
-    # ---------------- 定位线程 ----------------
-    def localization_worker(self):
-        from pixloc.localization import RenderLocalizer, SimpleTracker
-        setproctitle.setproctitle('PiLoT_Localize')
-        localizer = RenderLocalizer(self.conf)
-        results = []   # 存盘缓冲
-        fps_log_every = 30
-        flag = True
-        last_euler, last_trans = None, None
-        for idx, (img_path, img_tensor) in enumerate(zip(self.img_list, self.query_list)):
-            # 1) 拿到渲染结果（阻塞）
-            item = self.task_q.get()
-            if item is None:        # 渲染端提前喊停
                 break
+
+        with open(self.estimated_target_path, "w") as f:
+            f.write("\n".join(target_results))
+
+        self.stop_evt.set()
+        self.task_q.put(None)
+        self.task_q.close()
+        self.task_q.join_thread()
+        self.pose_q.close()
+        self.pose_q.join_thread()
+        logger.info("Rendering worker finished.")
+
+    def localization_worker(self) -> None:
+        """Process that runs pose refinement on each query frame."""
+        from pixloc.localization.localizer import RenderLocalizer
+
+        setproctitle.setproctitle("PiLoT_Localize")
+        localizer = RenderLocalizer(self.conf)
+        results: List[str] = []
+        last_euler: Optional[np.ndarray] = None
+        last_trans: Optional[List[float]] = None
+
+        for idx, (img_path, img_tensor) in enumerate(
+            zip(self.img_list, self.query_list)
+        ):
+            item = self.task_q.get()
+            if item is None:
+                break
+
             color, depth, render_euler, render_trans = item
-            # 2) 反投影
-            # t1 = time.time()
+
             if last_trans is None:
                 last_euler, last_trans = render_euler, render_trans
-            # --init frame
-            if idx == 0:
-                is_init_frame = True
-            else:
-                is_init_frame = False
-            P3d, T_w2c_mod, T_init, dd = self.back_project(depth, render_euler, render_trans, last_euler, last_trans, is_init_frame)
-            
-            # t2 = time.time()
-            # print('反投影耗时：', t2-t1)
-            t0 = time.time()
-            # 2) 调用定位
-            ret = localizer.run_query(
-                img_path, self.query_camera, self.render_camera,
-                color,  # render_frame
-                query_T = T_init,
-                render_T= T_w2c_mod,
-                Points_3D_ECEF = P3d,
-                query_resize_ratio = self.query_resize_ratio,
-                dd = dd,
-                gt_pose_dict=self.gt_pose_dict,
-                last_frame_info = self.last_frame_info,
-                image_query = img_tensor
+
+            is_init = (idx == 0)
+            p3d, T_w2c, T_init, dd = self.back_project(
+                depth, render_euler, render_trans,
+                last_euler, last_trans, is_init,
             )
-            last_euler, last_trans = ret['euler_angles'], ret['translation'] 
+
+            t0 = time.time()
+            ret = localizer.run_query(
+                img_path,
+                self.query_camera,
+                self.render_camera,
+                color,
+                query_T=T_init,
+                render_T=T_w2c,
+                Points_3D_ECEF=p3d,
+                query_resize_ratio=self.query_resize_ratio,
+                dd=dd,
+                gt_pose_dict=self.gt_pose_dict,
+                last_frame_info=self.last_frame_info,
+                image_query=img_tensor,
+            )
+
+            last_euler = ret["euler_angles"]
+            last_trans = ret["translation"]
             qname = os.path.basename(img_path)
-            
-            # self.last_frame_info['observations'] = ret['observations']
-            # self.last_frame_info['euler_angles'] = ret['euler_angles']
-            # self.last_frame_info['translation'] = ret['translation']
-            # cv2.imwrite(f'{self.outputs}/{idx}_query.png', img_tensor)
-            
-            fps = int((1000 / ((time.time()-t0)*1e3)))
-            if idx % fps_log_every == 0:
-                logging.info("loc %.2f ms", 1000/fps)
-            # 3) 把得到的新姿态塞回 pose_q，供下一帧渲染
-            if idx < len(self.img_list)-1:
-                self.pose_q.put((ret['euler_angles'], ret['translation'], qname, img_tensor, fps))
-            print(f"Localization Thread calculated frames: {idx} | Pitch, Roll, Yaw: {ret['euler_angles'].tolist()} | Longitude, Latitude, Altitude: {ret['translation']}")
-            # 4) 暂存结果
-            results.append(f"{qname} {' '.join(map(str, ret['translation']))} "
-                           f"{' '.join(map(str, [ret['euler_angles'][1], ret['euler_angles'][0], ret['euler_angles'][2]]))}")
+
+            elapsed_ms = (time.time() - t0) * 1000
+            if idx % 30 == 0:
+                logger.info("Frame %d | %.1f ms", idx, elapsed_ms)
+
+            if idx < len(self.img_list) - 1:
+                self.pose_q.put(
+                    (ret["euler_angles"], ret["translation"], qname, None)
+                )
+
+            logger.info(
+                "Frame %d | euler=%s | trans=%s",
+                idx, ret["euler_angles"].tolist(), ret["translation"],
+            )
+
+            ea = ret["euler_angles"]
+            results.append(
+                f"{qname} "
+                f"{' '.join(map(str, ret['translation']))} "
+                f"{ea[1]} {ea[0]} {ea[2]}"
+            )
 
             if self.stop_evt.is_set():
                 break
-        with open(self.estimated_pose, "w") as f:
+
+        with open(self.estimated_pose_path, "w") as f:
             f.write("\n".join(results))
-        
-        # self.flush_pose_and_send_sentinel()
-        # 收尾：给渲染端塞哨兵 + 关队列 + 事件
+
         self.pose_q.put(None)
         self.stop_evt.set()
-        self.task_q.close(); self.task_q.join_thread()
-        self.pose_q.close(); self.pose_q.join_thread()
-        logging.info('Localization process done')
-    def flush_pose_and_send_sentinel(self):
-        # 1) 清空 pose_q 中所有旧条目
-        try:
-            while True:
-                self.pose_q.get_nowait()
-        except queue.Empty:
-            pass
+        self.task_q.close()
+        self.task_q.join_thread()
+        self.pose_q.close()
+        self.pose_q.join_thread()
+        logger.info("Localization worker finished.")
 
-        # 2) 然后往里放一个 None，作为哨兵
-        self.pose_q.put(None)
-    def start_threads(self):
-        # 启动定位线程 
-        self.localization_thread_instance = threading.Thread(target=self.localization_thread)
-        self.localization_thread_instance.start()
+    # -- Helpers --------------------------------------------------------------
 
-        # 启动渲染线程
-        self.rendering_thread_instance = threading.Thread(target=self.rendering_thread)
-        self.rendering_thread_instance.start()
+    def back_project(
+        self,
+        depth_frame: np.ndarray,
+        euler_angles: List[float],
+        translation: List[float],
+        query_euler: List[float],
+        query_trans: List[float],
+        is_init: bool = True,
+        num_samples: int = 500,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """Back-project depth to 3D points and build initial pose candidates."""
+        device = self.device
+        depth = (
+            depth_frame.to(device)
+            if torch.is_tensor(depth_frame)
+            else torch.as_tensor(depth_frame, device=device)
+        )
 
-    def stop_threads(self):
-        self.localization_thread_instance.join()
-        self.rendering_thread_instance.join()
-
-    def back_project(self, depth_frame, euler_angles, translation, query_euler_angles, query_translation, is_init_frame = True, num_samples = 500, device = 'cuda'):
-        # 
-        if not torch.is_tensor(depth_frame):
-            depth = torch.as_tensor(depth_frame, device=device)
-        else:
-            depth = depth_frame.to(device)
-
-        # 2) 把 T_render_in_ECEF_c2w 也转为 GPU tensor
-        T_render_in_ECEF_c2w = torch.as_tensor(
+        T_c2w = torch.as_tensor(
             euler_angles_to_matrix_ECEF(euler_angles, translation),
-            device=device, dtype=torch.float32
-        )  # shape (4,4) 或 (3,4)
+            device=device, dtype=torch.float32,
+        )
 
-        # 3) 生成随机像素坐标也用 torch
-        H, W = int(self.render_camera_osg[1]), int(self.render_camera_osg[0])
-        # [num_samples]
+        H = int(self.render_camera_osg[1])
+        W = int(self.render_camera_osg[0])
         ys = torch.randint(0, H, size=(num_samples,), device=device)
         xs = torch.randint(0, W, size=(num_samples,), device=device)
-        points2d = torch.stack((xs, ys), dim=1)  # (N,2)
-        Points_3D_ECEF, T_render_in_ECEF_w2c_modified, T_initial_pose_candidates, dd = get_3D_samples_v4(points2d, depth, T_render_in_ECEF_c2w, self.render_camera, query_euler_angles, query_translation, origin = self.origin, mul = self.mul, is_init_frame = is_init_frame)
-        # if dd is not None:
-        #     self.dd = 
-        return Points_3D_ECEF, T_render_in_ECEF_w2c_modified, T_initial_pose_candidates, dd
+        points2d = torch.stack((xs, ys), dim=1)
 
-    # 假设的计算位姿函数
-    def calculate_pose(self, render_frame, points_3d):
-        # 根据渲染图和3D点计算位姿
-        return "Pose"
+        return sample_3d_points(
+            points2d, depth, T_c2w, self.render_camera,
+            query_euler, query_trans,
+            origin=self.origin, mul=self.mul, is_init_frame=is_init,
+        )
 
-    def video_save(self):
-        video_generation.create_video_from_images(self.outputs, self.outputs+'/video.mp4') 
-    def eval(self):
-        evaluate_XYZ_EULER(self.estimated_pose, self.gt_pose)
-    def run(self):
-        ctx = mp.get_context("spawn")        # 保持 spawn
+    def evaluate(self) -> None:
+        """Evaluate localization results against ground truth."""
+        evaluate_pose(self.estimated_pose_path, self.gt_pose_path)
+        evaluate_target(self.estimated_target_path, self.gt_rtk_path)
+
+    def run(self) -> None:
+        """Launch rendering and localization as parallel processes."""
+        ctx = mp.get_context("spawn")
         p_render = ctx.Process(target=self.rendering_worker, daemon=True)
-        p_loc    = ctx.Process(target=self.localization_worker, daemon=True)
-        # p_render = ctx.Process(
-        #         target=self.rendering_worker, 
-        #         name='render_worker',  
-        #         daemon=True
-        #     )
-        # p_loc = ctx.Process(
-        #     target=self.localization_worker, 
-        #     name='localization_worker', 
-        #     daemon=True
-        # )
-        p_render.start(); p_loc.start()
-        p_loc.join()                         # 先等定位结束
-        p_render.join(5)                    # 最多等 30 s
-        if p_render.is_alive():              # 兜底：仍卡住就强退
+        p_loc = ctx.Process(target=self.localization_worker, daemon=True)
+
+        p_render.start()
+        p_loc.start()
+
+        p_loc.join()
+        p_render.join(5)
+
+        if p_render.is_alive():
             p_render.terminate()
             p_render.join()
-def parse_args():
-    parser = argparse.ArgumentParser(description="你的程序说明")
 
-    parser.add_argument(
-        "-c", "--config",
-        type=str,
-        default="configs/default.yaml",
-        help="配置文件路径"
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="PiLoT: Pixel-Level Localization and Tracking",
     )
-
     parser.add_argument(
-        "--name",
-        type=str,
-        default="default_experiment",
-        help="实验名称，用于日志标记"
+        "-c", "--config", type=str,
+        default="configs/feicuiwan_m4t.yaml",
+        help="Path to configuration YAML file",
     )
-
     parser.add_argument(
-        "--init_euler",
-        type=str,
-        default="[0.0, 0.0, 0.0]",
-        help="初始欧拉角（格式如：[25.0, 0.0, 314.9993]）"
+        "--name", type=str, default=None,
+        help="Dataset / sequence name (overrides the value in config)",
     )
-
-    parser.add_argument(
-        "--init_trans",
-        type=str,
-        default="[0.0, 0.0, 0.0]",
-        help="初始平移（格式如：[x, y, z]）"
-    )
-
-    args = parser.parse_args()
+    # Accepted for shell-script compatibility; the initial pose is read
+    # from the first line of the pose file specified in the config.
+    parser.add_argument("--init_euler", type=str, default="[0,0,0]")
+    parser.add_argument("--init_trans", type=str, default="[0,0,0]")
+    return parser.parse_args()
 
 
-    return args
-# 主程序入口
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point."""
     args = parse_args()
-    init_euler = args.init_euler
-    init_trans = args.init_trans
-    name = args.name
-    config_file = args.config
-    # name = 'DJI_20250612194903_0021_V'
-    # config_file = '/home/ubuntu/Documents/code/github/FPV/PiLoT/configs/feicuiwan_m4t.yaml'
-    name = "interval1_HKisland_GNSS03"
-    config_file = "/home/ubuntu/Documents/code/github/FPV/PiLoT/configs/uav_scenes.yaml"
-    
-    with open(config_file, "r", encoding="utf-8") as f:
+
+    with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    render_config = config["render_config"]
-    default_confs = config["default_confs"]
-    default_paths = config["default_paths"]
-    dual_task = DualProcessTask(config,  name=name)
-    
-    dual_task.run()
-    dual_task.eval()
-    
+
+    task = DualProcessTask(config, name=args.name)
+    task.run()
+    task.evaluate()
+    logger.info("Done.")
 
 
-
-
-
-
+if __name__ == "__main__":
+    main()

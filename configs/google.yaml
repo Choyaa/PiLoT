@@ -191,7 +191,7 @@ default_confs:
       trainable: true # false # true
     
   cam_query:
-    max_size: 512  #960
+    max_size: 960  #960
     model: "PINHOLE"
     # width: 960
     # height: 540
@@ -206,7 +206,7 @@ default_confs:
     # height: 144
     # params: [309.013, 309.013, 128, 72]
     distortion: []
-  dataset_path: "/media/ubuntu/PS2000/"
+  dataset_path: "/media/ubuntu/PS20002/"
   dataset_name: "USA_seq8@8@sunny@500"
   output_name: "USA_seq8@8@sunny@500"
   use_kf: false

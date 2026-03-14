@@ -115,7 +115,7 @@ for target_name in "${target_names[@]}"; do
 
     echo "--- fpvloc"
     python main.py \
-      --config "/home/ubuntu/Documents/code/github/FPV/PiLoT/configs/feicuiwan_m4t.yaml" \
+      --config "configs/feicuiwan_m4t.yaml" \
       --init_euler "$euler" \
       --init_trans "$trans" \
       --name "$target_name"

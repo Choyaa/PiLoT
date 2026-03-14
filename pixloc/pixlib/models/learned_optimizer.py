@@ -1,7 +1,6 @@
 import logging
 from typing import Tuple, Optional
 import torch
-import copy
 from torch import nn, Tensor
 import direct_abs_cost_cuda
 import matplotlib.pyplot as plt
@@ -10,9 +9,6 @@ import time
 matplotlib.use('Agg')
 from .base_optimizer import BaseOptimizer
 from ..geometry import Camera, Pose
-from ..geometry.optimization import optimizer_step
-from ..geometry import losses  # noqa
-import numpy as np
 logger = logging.getLogger(__name__)
 
 def transform_p3d(body2view_pose_data, p3d):
@@ -206,21 +202,19 @@ class LearnedOptimizer(BaseOptimizer):
                 x.squeeze(0) if x.shape[0] == 1 else x for x in [g, H, w_loss, cost]
             ]
             if prior and num_iters == 4:
-                print('prior')
-                lambda_prior = 1e-3  # 可调参数
+                logger.debug('Applying prior regularization')
+                lambda_prior = 1e-3
 
-                # 相对变换 T_kf^-1 * T
                 T_rel = T_kf_batch.inv() @ T  # [N, 4, 4]
                 aa_rel = T_rel.to_aa()  # [N, 6]
 
-                # 添加一阶近似的正则梯度项和单位Hessian
                 g_prior = lambda_prior * aa_rel
                 H_prior = lambda_prior * torch.eye(6, device=g.device).unsqueeze(0).repeat(T.shape[0], 1, 1)
 
                 g += g_prior
                 H += H_prior
             if last_F_query is not None:
-                print('last_F_query')
+                logger.debug('Using last frame features')
                 g1, H1, w_loss1, cost1 = self.fn(
                 inputs_last['pose_data_q'],
                 inputs_last['f_r'],
@@ -235,7 +229,7 @@ class LearnedOptimizer(BaseOptimizer):
                 g1, H1, w_loss1, cost1 = [
                     x.squeeze(0) if x.shape[0] == 1 else x for x in [g1, H1, w_loss1,cost1]
                 ]
-                ratio_last = 0.5  # 控制上一帧在LM中的权重（0~1之间）
+                ratio_last = 0.5
                 g += ratio_last * g1
                 H += ratio_last * H1
                 w_loss += ratio_last * w_loss1
@@ -272,7 +266,6 @@ class LearnedOptimizer(BaseOptimizer):
                 total_cost_loss = w_loss[topk_indices]
             else:
                 total_cost_loss = w_loss
-                # print("下降最快的是第 {} 组".format(topk_indices))
             # if ref_camera[0][0] == 960/ratio and len(overall_losses) == 1 and len(T_flat) > 1:
             #     _, topk_indices = torch.topk(-overall_losses[0], 32, dim=-1, largest=True, sorted=True)
             #     T_flat = T_flat[topk_indices]
@@ -282,7 +275,6 @@ class LearnedOptimizer(BaseOptimizer):
             #     cost = cost[topk_indices]
             #     inputs["pose_data_q"] =  T_flat.unsqueeze(0).contiguous().clone()
             #     inputs["cam_data_q"] = qcamera.unsqueeze(0).contiguous().clone()
-            #     # print("下降最快的是第 {} 组".format(topk_indices))
             # if ref_camera[0][0] == 1920/ratio and len(overall_losses) == 1 and len(T_flat) > 1:
             #     _, topk_indices = torch.topk(-overall_losses[0], 32, dim=-1, largest=True, sorted=True)
             #     # topk_indices = topk_indices[0]
@@ -293,16 +285,11 @@ class LearnedOptimizer(BaseOptimizer):
             #     cost = cost[topk_indices]
             #     inputs["pose_data_q"] =  T_flat.unsqueeze(0).contiguous().clone()
             #     inputs["cam_data_q"] = qcamera.unsqueeze(0).clone()
-                # print("下降最快的是第 {} 组".format(topk_indices))
             
         # errors_all = torch.stack(err_list, dim=0).T  # [b, 10]
-        # 展示每个样本的误差变化 
         # for i in range(len(errors_all)):
-        #     print(f"样本 {i} 的误差变化: {errors_all[i]}")
 
-        # print('优化后：',T_flat[0])
         
-        # best_idx = torch.argmin(total_loss)  # 最佳收敛位姿索引
         # print('argmax weight loss: ', torch.argmax(total_loss))
         # print('argmin cost: ', torch.argmin(total_cost_loss))
         torch.cuda.synchronize()

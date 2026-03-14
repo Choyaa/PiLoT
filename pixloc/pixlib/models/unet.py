@@ -211,11 +211,10 @@ if __name__ == '__main__':
     # import torchvision.models as models
     from torch import nn
 
-    # 创建模型
     config = {
         'output_scales': [0, 2, 4],
         'output_dim': 128,
-        'encoder': 'vgg19',  # 使用的 backbone
+        'encoder': 'vgg19',
         'num_downsample': 4,
         'decoder': [64, 64, 64, 32],
         'decoder_norm': 'nn.BatchNorm2d',
@@ -226,14 +225,11 @@ if __name__ == '__main__':
 
     model = UNet(config)
 
-    # 假设输入尺寸是 (368, 640, 3)
     input_tensor = torch.randn(1, 3, 368, 640)
 
-    # 计算模型的参数数量
     param_count = parameter_count_table(model)
     print(f"Total number of parameters: {param_count}")
 
-    # 计算模型的 FLOPs
     flop_count = FlopCountAnalysis(model, input_tensor)
     print(f"Total FLOPs: {flop_count.total()}")
     from thop import profile

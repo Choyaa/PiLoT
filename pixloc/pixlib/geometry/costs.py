@@ -220,7 +220,6 @@ class DirectAbsoluteCost2:
         # elif cam_data_r[0][0][0] == 64:
         #     torch.save(inputs, "/home/liuxy24/code/FPV_dev_quat_long/FPV-Test/FPV-Test/sample_inputs_64_1.pt")
         num_init_pose = pose_data_q.shape[1]
-        # === Step 1: 参考帧中投影、采样、可见性判断 ===
         p3d_r = transform_p3d(pose_data_r, p3D)
         p2d_r, visible_r = project_p3d(cam_data_r, p3d_r)
         p2d_r = p2d_r[0]
@@ -228,7 +227,7 @@ class DirectAbsoluteCost2:
         fp_r, valid_r, _ = self.interpolate_feature_map(f_r, p2d_r)
 
         valid_ref_mask = (valid_r & visible_r).to(torch.float32)  # shape: [1, N]
-        mask = valid_ref_mask.transpose(1, 0)  # shape: [N, 1]，避免 unsqueeze
+        mask = valid_ref_mask.transpose(1, 0)
 
         fp_r = fp_r[0] * mask  # [N, C]
         p3D = p3D[0] * mask    # [N, 3]
@@ -239,13 +238,11 @@ class DirectAbsoluteCost2:
         fp_r = torch.nn.functional.normalize(fp_r, dim=-1)
         
 
-        # === Step 2: 查询帧中投影 ===
         p3d_q = transform_p3d(pose_data_q, p3D)
         p2d_q, visible_q = project_p3d(cam_data_q, p3d_q)
 
-        p2d_q = p2d_q * mask.T.view(1, 1, -1, 1)  # [B, N, 2] * [1, N, 1]  # [B, N, 2]，广播避免 unsqueeze
+        p2d_q = p2d_q * mask.T.view(1, 1, -1, 1)
         
-        # === Step 3: 查询帧特征采样 ===
         fp_q, valid_q, J_f = self.interpolate_feature_map(f_q, p2d_q.reshape(1, -1, 2), return_gradients=True)
         fp_q = fp_q.view(1, num_init_pose, -1, fp_q.shape[-1])
         valid_q = valid_q.view(1, num_init_pose, -1)
@@ -267,7 +264,6 @@ class DirectAbsoluteCost2:
         J_p2d_p3d = f_diag_embed @ J_project(p3d_q)  # [B, N, 2, 3]
         J = J_f @ J_p2d_p3d @ J_p3d_pose             # [B, N, 2, 6]
 
-        # === Step 5: loss 和加权 ===
         cost = (res**2).sum(-1)
         cost, w_loss, _ = self.loss_fn1(cost)
 

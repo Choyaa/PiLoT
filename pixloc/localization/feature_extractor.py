@@ -53,7 +53,6 @@ class FeatureExtractor(torch.nn.Module):
         # import time
         # for _ in range(10):
         #     self.model({'image': image_tensor})
-        # # 计算时间
         # start = time.time()
         # for _ in range(50):
         #     self.model({'image': image_tensor})

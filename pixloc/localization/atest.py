@@ -22,44 +22,35 @@ def get_rotation_enu_in_ecef(lon, lat):
     Reference: https://apps.dtic.mil/dtic/tr/fulltext/u2/a484864.pdf, Section 4.3, 4.1
     Reference: https://www.fossen.biz/wiley/ed2/Ch2.pdf, p29
     """
-    # 将角度转换为弧度
     latitude_rad = np.radians(lat)
     longitude_rad = np.radians(lon)
     
-    # 计算向上的向量（Up Vector）
     up = np.array([
         np.cos(longitude_rad) * np.cos(latitude_rad),
         np.sin(longitude_rad) * np.cos(latitude_rad),
         np.sin(latitude_rad)
     ])
     
-    # 计算向东的向量（East Vector）
     east = np.array([
         -np.sin(longitude_rad),
         np.cos(longitude_rad),
         0
     ])
     
-    # 计算向北的向量（North Vector），即up向量和east向量的外积（叉积）
     north = np.cross(up, east)
     
-    # 构建局部到世界坐标系的转换矩阵
     local_to_world = np.zeros((3, 3))
-    local_to_world[:, 0] = east  # 东向分量
-    local_to_world[:, 1] = north  # 北向分量
-    local_to_world[:, 2] = up  # 上向分量
+    local_to_world[:, 0] = east
+    local_to_world[:, 1] = north
+    local_to_world[:, 2] = up
     return local_to_world
 def pixloc_to_osg(T_refined_c2w):
     R_c2w, t_c2w = T_refined_c2w[:3, :3], T_refined_c2w[:3, 3]
     t_c2w_wgs84 = ECEF_to_WGS84(t_c2w)
     lon, lat, _ = t_c2w_wgs84
-    # 计算从ENU到ECEF的旋转矩阵
     rot_ned_in_ecef = get_rotation_enu_in_ecef(lon, lat)
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_ecef_in_enu = rot_ned_in_ecef.T  #! ECEF TO WGS84 transformation
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_pose_in_enu = np.matmul(rot_ecef_in_enu, R_c2w)
-    # 从ENU姿态矩阵中提取欧拉角
     rot_pose_in_enu_obj = R.from_matrix(rot_pose_in_enu)
     euler_angles_in_enu = rot_pose_in_enu_obj.as_euler('xyz', degrees=True)
     
@@ -84,7 +75,6 @@ def build_c2w_batch(T_batch, dd, mul, origin):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dtype  = torch.float64
 
-    # 2) 准备输入
     R_in = T_batch.R.to(device=device, dtype=dtype)  # [B,3,3]
     t_in = T_batch.t.to(device=device, dtype=dtype)  # [B,3]
     if dd is not None:
@@ -96,33 +86,25 @@ def build_c2w_batch(T_batch, dd, mul, origin):
 
     B = R_in.shape[0]
 
-    # 3) 批量正交化：SVD → U @ Vh
     U, S, Vh = torch.linalg.svd(R_in)
-    R = U @ Vh                                        # [B,3,3] 仍是 w2c
+    R = U @ Vh
 
-    # 4) 调整平移（扣掉 dd）
     t = t_in
     if dd is not None:
-        # dd 视作 [3]，自动广播到 [B,3]
         t = t - (R @ dd)
 
-    # 5) 转置成 c2w
     R_c2w = R.transpose(-1, -2)                       # [B,3,3]
 
-    # 6) 构建 [B,4,4] 单位矩阵
     T = torch.eye(4, device=device, dtype=dtype) \
              .unsqueeze(0).repeat(B,1,1)              # [B,4,4]
     T[:, :3, :3] = R_c2w
 
-    # 7) 填平移、缩放、翻轴、加 origin
     #   t_unsq: [B,3,1]  => R_c2w @ t_unsq => [B,3,1]
     tr = (-R_c2w @ t.unsqueeze(-1)).squeeze(-1) / mul  # [B,3]
     T[:, :3, 3] = tr
 
-    # 翻转 Y/Z 轴
     T[:, :3, 1:3] *= -1
 
-    # 加上 origin 偏移
     T[:, :3, 3] += origin
 
     return T
@@ -140,7 +122,6 @@ def build_prior_batch(T_render, dd, mul, origin):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     dtype  = torch.float64
 
-    # 上面函数里同样的输入强转
     R = T_render.R.to(device=device, dtype=dtype)
     t = T_render.t.to(device=device, dtype=dtype)
     if dd is not None:
@@ -150,20 +131,16 @@ def build_prior_batch(T_render, dd, mul, origin):
     mul    = torch.as_tensor(mul,    device=device, dtype=dtype)
     origin    = torch.as_tensor(origin,    device=device, dtype=dtype)
 
-    # 转置成 c2w
     R_c2w = R.transpose(-1, -2)  # [3,3]
 
-    # 计算平移
     tr = (-R_c2w @ t.unsqueeze(-1)).squeeze(-1) / mul  # [3]
     tr = tr + origin
 
-    # 组装单个 4×4
     T_single = torch.eye(4, device=device, dtype=dtype)
     T_single[:3, :3] = R_c2w
     T_single[:3, 1:3] *= -1
     T_single[:3,  3] = tr
 
-    # 复制 B 份
     return T_single        # [B,4,4]
 def magnitude(T):
     R = T[..., :3, :3]
@@ -206,7 +183,6 @@ for _ in range(100):
     t_indices = dt <= 8 #!
     R_indices = dR <= 8
 
-    # 剔除旋转变化量和平移变化量过大的候选
     valid = (~fail_list) & t_indices & R_indices
     valid_loss = overall_loss[valid]
 

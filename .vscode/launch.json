@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "/home/ubuntu/miniconda3/envs/targetloc/bin/python3.10",
+            "python": "/home/choya/miniconda3/envs/pilot/bin/python",
         }
     ]
 }

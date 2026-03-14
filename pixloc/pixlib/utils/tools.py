@@ -1,14 +1,16 @@
-"""
-Various handy Python and PyTorch utils.
-"""
+"""Various handy Python and PyTorch utils."""
 
-import time
 import inspect
-import numpy as np
+import logging
 import os
-import torch
 import random
+import time
 from contextlib import contextmanager
+
+import numpy as np
+import torch
+
+logger = logging.getLogger(__name__)
 
 
 class AverageMetric:
@@ -78,7 +80,7 @@ class Timer(object):
     def __exit__(self, type, value, traceback):
         self.duration = time.time() - self.tstart
         if self.name is not None:
-            print('[%s] Elapsed: %s' % (self.name, self.duration))
+            logger.info('[%s] Elapsed: %s', self.name, self.duration)
 
 
 def set_num_threads(nt):

@@ -114,7 +114,7 @@ def load_experiment(exper, conf={}, get_last=False):
     OmegaConf.set_struct(loaded_conf, False)
     conf = OmegaConf.merge(loaded_conf.model, OmegaConf.create(conf))
     yaml_str = OmegaConf.to_yaml(conf, resolve=True)  
-    print(yaml_str)
+    logger.info("Model config:\n%s", yaml_str)
     model = get_model(conf.name)(conf).eval()
 
     state_dict = ckpt['model']

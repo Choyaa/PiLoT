@@ -122,23 +122,17 @@ def get_points2D_ECEF(R, t, K, points_3D):  # points_3D[n,3]
         返回:
         - point_2d: 二维图像坐标数组，尺寸为 [n, 2]。
         """
-        # 将输入数据转换为高精度浮点数类型
         points_3D = np.float64(points_3D)
         K = np.float64(K)
         R = np.float64(R)
         t = np.float64(t)
-        # 修改内参矩阵的最后一项，以适应透视投影
         K[-1, -1] = -1
         
         K_inverse = np.linalg.inv(K)
         R_inverse = np.linalg.inv(R)
-        # 计算相机坐标系下的点
         point_3d_camera = np.expand_dims(points_3D - t, 1)
-        # 将世界坐标系下的点转换为相机坐标系下的点
         point_3d_camera_r = R_inverse @ point_3d_camera
-        # 将相机坐标系下的点投影到图像平面，得到同质坐标
         point_2d_homo = K_inverse @ point_3d_camera_r
-        # 将同质坐标转换为二维图像坐标
         point_2d = point_2d_homo / point_2d_homo[2]
         return point_2d.T
 def read_valid_depth(mkpts1r, depth=None, device = 'cuda'):
@@ -151,8 +145,8 @@ def read_valid_depth(mkpts1r, depth=None, device = 'cuda'):
 
     return depth, valid
 def preprocess_param(camera, pose):
-    pose[:3, 1] = -pose[:3, 1]  # Y轴取反，投影后二维原点在左上角
-    pose[:3, 2] = -pose[:3, 2]  # Z轴取反
+    pose[:3, 1] = -pose[:3, 1]
+    pose[:3, 2] = -pose[:3, 2]
 
     _, h = camera.size
     camera.c[1] = h - camera.c[1]
@@ -171,7 +165,6 @@ def get_3D_samples(mkpts_r, depth_mat, render_T, render_camera, device = 'cuda')
     
     depth, valid = read_valid_depth(mkpts_r, depth = depth_mat, device=device)
     # Compute 3D points
-    #!转换到OSG屏幕坐标系下反投影求3D点
     mkpts_r_in_osg = copy.deepcopy(mkpts_r[valid])
     mkpts_r_in_osg[:, 1] = render_height_px - mkpts_r_in_osg[:, 1]
     Points_3D_ECEF = get_Points3D_torch(
@@ -199,30 +192,24 @@ def get_Points3D_torch(depth, R, t, K, points):
     返回:
     - Points_3D: 三维世界坐标数组，尺寸为 [n, 3]。
     """
-    # 检查points是否为同质坐标，如果不是则扩展为同质坐标
     if points.shape[-1] != 3:
         points_2D = torch.cat([points, torch.ones_like(points[:, :1])], dim=-1)
         points_2D = points_2D.T
     else:
         points_2D = points.T
 
-    # 扩展平移向量以匹配点的数量
-    t = t.unsqueeze(1)  # 这相当于np.expand_dims(t, -1)
-    t = t.repeat(1, points_2D.size(-1))  # 这相当于np.tile(t, points_2D.shape[-1])
+    t = t.unsqueeze(1)
+    t = t.repeat(1, points_2D.size(-1))
 
-    # 将所有输入转换为高精度浮点数类型
     points_2D = points_2D.float()
     K = K.float()
     R = R.float()
     depth = depth.float()
     t = t.float()
 
-    # 修改内参矩阵的最后一项，以适应透视投影
     K[-1, -1] = -1
 
-    # 计算三维世界坐标
     Points_3D = R @ (K @ (depth * points_2D)) + t
 
-    # 返回三维点坐标，形状为 [n, 3]
     return Points_3D.cpu().numpy().T
 

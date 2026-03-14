@@ -1,6 +1,0 @@
-
-[extra]
-jupyter
-scikit-learn
-ffmpeg-python
-kornia

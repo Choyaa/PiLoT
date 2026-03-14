@@ -9,8 +9,8 @@ default_paths:
 
 render_config:
   model_path: "http://localhost:8078/Scene/Production_6.json"
-  init_rot: [49.71794737193199, 0, 131.18351655093858]
-  init_trans: [113.00487144412334, 28.291504331699095, 72.80589840188622]
+  init_rot: [0,0,0]
+  init_trans: [0,0,0]
   # render_camera: [960, 540, 689.475, 689.45,478.75, 268.35]
   outputs: "outputs/citystars"
 default_confs:
@@ -100,13 +100,13 @@ default_confs:
     #             2687.5]
 
   dataset_path: "/mnt/sda/MapScape/query"
-  dataset_name: "DJI_20250612173353_0002_V_test"
-  output_name: "DJI_20250612173353_0002_V_test"
+  dataset_name: ""
+  output_name: ""
   use_kf: false
   padding: True
   refine:
     origin: [0, 0, 0]
-    dis_thes: 500
-    R_thes: 500
+    dis_thes: 30
+    R_thes: 30
     mul: 0.001
   num_init_pose: 64

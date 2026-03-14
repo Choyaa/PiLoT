@@ -21,19 +21,16 @@ def read_intrinsics(camera):
     """
     if len(camera) == 5:
         image_width_px, image_height_px, sensor_width_mm, sensor_height_mm, f_mm = camera
-        # 计算内参矩阵中的焦距
         focal_ratio_x = f_mm / sensor_width_mm
         focal_ratio_y = f_mm / sensor_height_mm
         
         fx = image_width_px * focal_ratio_x
         fy = image_height_px * focal_ratio_y
 
-        # 计算主点坐标
         cx = image_width_px / 2
         cy = image_height_px / 2
     elif len(camera) == 7:
         image_width_px, image_height_px, cx, cy, sensor_width_mm, sensor_height_mm, f_mm = camera
-        # 计算内参矩阵中的焦距
         focal_ratio_x = f_mm / sensor_width_mm
         focal_ratio_y = f_mm / sensor_height_mm
         
@@ -41,7 +38,6 @@ def read_intrinsics(camera):
         fy = image_height_px * focal_ratio_y
     elif len(camera) == 8:
         image_width_px, image_height_px, cx, cy, sensor_width_mm, sensor_height_mm, fx_mm, fy_mm = camera
-        # 计算内参矩阵中的焦距
         focal_ratio_x = fx_mm / sensor_width_mm
         focal_ratio_y = fy_mm / sensor_height_mm
         
@@ -49,13 +45,11 @@ def read_intrinsics(camera):
         fy = image_height_px * focal_ratio_y    
     elif len(camera) == 6:
         image_width_px, image_height_px, cx, cy, fx, fy= camera
-        # 计算内参矩阵中的焦距
         focal_ratio_x = fx / image_width_px
         focal_ratio_y = fy / image_height_px
         
         fx = image_width_px * focal_ratio_x
         fy = image_height_px * focal_ratio_y      
-    # 构建内参矩阵 K
     K = [[fx, 0, cx],
         [0, fy, cy],
         [0, 0, 1]]

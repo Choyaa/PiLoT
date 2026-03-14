@@ -11,7 +11,6 @@ import copy
 import cv2
 # from render2loc_tan import Render2Loc
 
-### SETTING EXP PLACE (TODO:不同实验地点影响get_CRS和json文件选择)
 PLACE_CHANGSHA = 0 
 
 def matrix_to_euler_angles_ECEF(T_w2c):
@@ -23,13 +22,9 @@ def matrix_to_euler_angles_ECEF(T_w2c):
         
         translation = ECEF_to_WGS84(t_c2w)
         lon, lat, _ = translation
-        # 计算从ENU到ECEF的旋转矩阵
         rot_ned_in_ecef = get_rotation_enu_in_ecef(lon, lat)
-        # 将ECEF姿态矩阵转换为ENU姿态矩阵
         rot_ecef_in_enu = rot_ned_in_ecef.T  #! ECEF TO WGS84 transformation
-        # 将ECEF姿态矩阵转换为ENU姿态矩阵
         rot_pose_in_enu = np.matmul(rot_ecef_in_enu, R_c2w)
-        # 从ENU姿态矩阵中提取欧拉角
         rot_pose_in_enu_obj = R.from_matrix(rot_pose_in_enu)
         euler_angles = rot_pose_in_enu_obj.as_euler('xyz', degrees=True)
 
@@ -37,12 +32,12 @@ def matrix_to_euler_angles_ECEF(T_w2c):
         return euler_angles, translation
 def euler_angles_to_matrix_ECEF(euler_angles, trans):
     lon, lat, _ = trans
-    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()  # ZXY 东北天  
+    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()
     rot_enu_in_ecef = get_rotation_enu_in_ecef(lon, lat)
     R_c2w = np.matmul(rot_enu_in_ecef, rot_pose_in_enu)
     q_w2c = rotmat2qvec(R_c2w.transpose())  # return wxyz (colmap pnp return xyzw)
     t_c2w = WGS84_to_ECEF(trans)
-    R_w2c_in_ecef = R_c2w.transpose() # 和enu的差异是第二行和第三行取负号
+    R_w2c_in_ecef = R_c2w.transpose()
     t_w2c = -R_w2c_in_ecef.dot(t_c2w)
 
     T_render_in_ECEF_c2w = np.eye(4)
@@ -58,13 +53,9 @@ def pixloc_to_osg(T_refined_c2w):
     R_c2w, t_c2w = T_refined_c2w[:3, :3], T_refined_c2w[:3, 3]
     t_c2w_wgs84 = ECEF_to_WGS84(t_c2w)
     lon, lat, _ = t_c2w_wgs84
-    # 计算从ENU到ECEF的旋转矩阵
     rot_ned_in_ecef = get_rotation_enu_in_ecef(lon, lat)
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_ecef_in_enu = rot_ned_in_ecef.T  #! ECEF TO WGS84 transformation
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_pose_in_enu = np.matmul(rot_ecef_in_enu, R_c2w)
-    # 从ENU姿态矩阵中提取欧拉角
     rot_pose_in_enu_obj = R.from_matrix(rot_pose_in_enu)
     euler_angles_in_enu = rot_pose_in_enu_obj.as_euler('xyz', degrees=True)
     
@@ -79,13 +70,9 @@ def pixloc_to_osg(T_refined_c2w):
     t_c2ww = np.array(-R_c2ww.dot(t_w2c))  
     t_c2w_wgs84 = ECEF_to_WGS84(t_c2ww)
     lon, lat, _ = t_c2w_wgs84
-    # 计算从ENU到ECEF的旋转矩阵
     rot_ned_in_ecef = get_rotation_enu_in_ecef(lon, lat)
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_ecef_in_enu = rot_ned_in_ecef.T  #! ECEF TO WGS84 transformation
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_pose_in_enu = np.matmul(rot_ecef_in_enu, R_c2ww)
-    # 从ENU姿态矩阵中提取欧拉角
     rot_pose_in_enu_obj = R.from_matrix(rot_pose_in_enu)
     euler_angles_in_enu = rot_pose_in_enu_obj.as_euler('xyz', degrees=True)
 
@@ -136,14 +123,10 @@ def colmap_to_osg(T_colmap_in_ned):
     t_c2w = np.array(-R_c2w.dot(t_w2c))  
     t_c2w_wgs84 = ECEF_to_WGS84(t_c2w)
     lon, lat, _ = t_c2w_wgs84
-    # 计算从ENU到ECEF的旋转矩阵
     rot_ned_in_ecef = get_rotation_enu_in_ecef(lon, lat)
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_ecef_in_enu = rot_ned_in_ecef.T  #! ECEF TO WGS84 transformation
-    # 将ECEF姿态矩阵转换为ENU姿态矩阵
     rot_pose_in_enu = np.matmul(rot_ecef_in_enu, R_c2w)
 
-    # 从ENU姿态矩阵中提取欧拉角
     rot_pose_in_enu_obj = R.from_matrix(rot_pose_in_enu)
     euler_angles_in_enu = rot_pose_in_enu_obj.as_euler('xyz', degrees=True)
     
@@ -187,15 +170,12 @@ def colmap_to_osg_bak2(T_colmap_in_ned):
     
     lon, lat, _ = t_c2w
     rot_enu_in_ecef = get_rotation_enu_in_ecef(lon, lat)
-    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()  # ZXY 东北天
+    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()
     
-    # 计算最终的旋转矩阵
     r = np.matmul(rot_enu_in_ecef, rot_pose_in_enu)
     
-    # 将经纬度转换为ECEF坐标系下的点
     xyz = WGS84_to_ECEF(t_c2w)
     
-    # 创建变换矩阵T，将旋转矩阵和平移向量合并
     T_ECEF = np.concatenate((r, np.array([xyz]).transpose()), axis=1)
     T_ECEF = np.concatenate((T_ECEF, np.array([[0, 0, 0, 1]])), axis=0)    
     
@@ -222,15 +202,12 @@ def colmap_to_osg_bak(T_colmap_in_ned):
     
     lon, lat, _ = t_c2w
     rot_enu_in_ecef = get_rotation_enu_in_ecef(lon, lat)
-    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()  # ZXY 东北天
+    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()
     
-    # 计算最终的旋转矩阵
     r = np.matmul(rot_enu_in_ecef, rot_pose_in_enu)
     
-    # 将经纬度转换为ECEF坐标系下的点
     xyz = WGS84_to_ECEF(t_c2w)
     
-    # 创建变换矩阵T，将旋转矩阵和平移向量合并
     T_ECEF = np.concatenate((r, np.array([xyz]).transpose()), axis=1)
     T_ECEF = np.concatenate((T_ECEF, np.array([[0, 0, 0, 1]])), axis=0)    
     
@@ -335,40 +312,35 @@ def get_rotation_enu_in_ecef(lon, lat):
     Reference: https://apps.dtic.mil/dtic/tr/fulltext/u2/a484864.pdf, Section 4.3, 4.1
     Reference: https://www.fossen.biz/wiley/ed2/Ch2.pdf, p29
     """
-    # 将角度转换为弧度
     latitude_rad = np.radians(lat)
     longitude_rad = np.radians(lon)
     
-    # 计算向上的向量（Up Vector）
     up = np.array([
         np.cos(longitude_rad) * np.cos(latitude_rad),
         np.sin(longitude_rad) * np.cos(latitude_rad),
         np.sin(latitude_rad)
     ])
     
-    # 计算向东的向量（East Vector）
     east = np.array([
         -np.sin(longitude_rad),
         np.cos(longitude_rad),
         0
     ])
     
-    # 计算向北的向量（North Vector），即up向量和east向量的外积（叉积）
     north = np.cross(up, east)
     
-    # 构建局部到世界坐标系的转换矩阵
     local_to_world = np.zeros((3, 3))
-    local_to_world[:, 0] = east  # 东向分量
-    local_to_world[:, 1] = north  # 北向分量
-    local_to_world[:, 2] = up  # 上向分量
+    local_to_world[:, 0] = east
+    local_to_world[:, 1] = north
+    local_to_world[:, 2] = up
     return local_to_world
 
 def get_CRS(exp_place):
     wgs84 = pyproj.CRS('EPSG:4326')
     if exp_place == PLACE_CHANGSHA:
-        cgcs2000 = pyproj.CRS('EPSG:4547')  # 翡翠湾
+        cgcs2000 = pyproj.CRS('EPSG:4547')
     else:
-        cgcs2000 = pyproj.CRS('EPSG:4529')  # 宁波
+        cgcs2000 = pyproj.CRS('EPSG:4529')
     return wgs84, cgcs2000
 
 def cgcs2000towgs84(c2w_t, exp_place):
@@ -866,11 +838,11 @@ if __name__ == '__main__':
     euler_angles = [3.47238421e+01, -8.33447684e-02,  1.23082890e+02]
     trans = [112.98941023000003, 28.291636667466683, 172.533362288028]
     lon, lat, _ = trans
-    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()  # ZXY 东北天  
+    rot_pose_in_enu = R.from_euler('xyz', euler_angles, degrees=True).as_matrix()
     rot_enu_in_ecef = get_rotation_enu_in_ecef(lon, lat)
     R_c2w = np.matmul(rot_enu_in_ecef, rot_pose_in_enu)
     q_w2c = rotmat2qvec(R_c2w.transpose())  # return wxyz (colmap pnp return xyzw)
     t_c2w = WGS84_to_ECEF(trans)
-    R_w2c_in_ecef = R_c2w.transpose() # 和enu的差异是第二行和第三行取负号
+    R_w2c_in_ecef = R_c2w.transpose()
     t_w2c = -R_w2c_in_ecef.dot(t_c2w)
     print(q_w2c, t_w2c)
