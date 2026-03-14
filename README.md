@@ -198,7 +198,7 @@ render_config:
   height: 2160 # query height
   params: [2700.0, 2700.0, 1915.7, 1075.1] # query [fx, fy, cx, cy]
   distortion: [0.0046, 0.1294, 0, 0.0012, -0.2037] # uery distortion
-  dataset_path: "/mnt/sda/MapScape/query"
+  dataset_path: "data_demo/query"
 ```
 
 ### Localization Configuration
@@ -284,11 +284,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🙏 Acknowledgments
 
 - Built on top of [PixLoc](https://github.com/cvg/pixloc) as the core registration backbone.
-- Uses [DeepAC](https://github.com/WangLongZJU/DeepAC) as the neural training framework.
-- Leverages [OpenSceneGraph](https://www.openscenegraph.org/) and [Cesium for Unreal](https://cesium.com/platform/cesium-for-unreal/) for high-fidelity 3D rendering and data management.
-- Inspired by recent advances in neural rendering and visual localization.
-- Data sources provided by [Google Earth](https://earth.google.com/web/).
-- Website template borrowed from [Nerfies](https://github.com/nerfies/nerfies.github.io).
+- Uses [DeepAC](https://github.com/WangLongZJU/DeepAC) as the training framework.
+- Leverages [OpenSceneGraph](https://www.openscenegraph.org/) for core 3D rendering.
+- Data sources and platform supported by [Google Earth](https://earth.google.com/web/) and [Cesium for Unreal](https://cesium.com/platform/cesium-for-unreal/).
 
 ## 📧 Contact
 

@@ -107,22 +107,41 @@ def evaluate_pose(
     med_yaw = np.median(errors_yaw)
     std_yaw = np.std(errors_yaw)
 
-    out = "\nMedian errors: {:.3f}m, {:.3f}deg, {:.3f}deg\n".format(
-        med_t, med_R, med_yaw
-    )
-    out += "Std errors: {:.3f}m, {:.3f}deg, {:.3f}deg\n".format(
-        std_t, std_R, std_yaw
-    )
-    out += "Percentage of test images localized within:"
-    threshs_t = [1, 3, 5]
-    threshs_R = [1.0, 3.0, 5.0]
-    for th_t in threshs_t:
-        ratio = np.mean(errors_t < th_t)
-        out += "\n\t{:.0f}cm: {:.2f}%".format(th_t * 100, ratio * 100)
-    for th_R in threshs_R:
-        ratio = np.mean(errors_R < th_R)
-        out += "\n\t{:.1f}deg: {:.2f}%".format(th_R, ratio * 100)
+    # ------------------- UAV SELF-LOCALIZATION SUMMARY -------------------
+    width = 54
+    line = "+" + "-" * (width - 2) + "+"
+    # Ensure all internal separators use the same logic
+    # This sep is for 3-column rows
+    sep_3col = "+" + "-" * 22 + "+" + "-" * 14 + "+" + "-" * 14 + "+"
+    # This sep is for 2-column rows
+    sep_2col = "+" + "-" * 35 + "+" + "-" * 16 + "+"
 
+    # --- UAV SELF-LOCALIZATION (PiLoT) ---
+    line = "+" + "-" * (width - 2) + "+"
+    # Simplified internal separator without middle '+' for perfect alignment
+    inner_sep = "|" + "-" * (width - 2) + "|"
+
+    # --- UAV SELF-LOCALIZATION (PiLoT) ---
+    out = "\n" + line
+    out += f"\n|{'UAV SELF-LOCALIZATION (PiLoT)'.center(width - 2)}|"
+    out += "\n" + line
+    out += f"\n| {'Metric':<19} | {'Median':^13} | {'Std Dev':^13} |"
+    out += "\n" + line
+    out += f"\n| {'Trans. Error (m)':<19} | {med_t:^13.3f} | {std_t:^13.3f} |"
+    out += f"\n| {'Rot. Error (deg)':<19} | {med_R:^13.3f} | {std_R:^13.3f} |"
+    out += f"\n| {'Yaw Error (deg)':<19} | {med_yaw:^13.3f} | {std_yaw:^13.3f} |"
+    out += "\n" + line
+    out += f"\n|{'RECALL STATISTICS'.center(width - 2)}|"
+    out += "\n" + line
+    out += f"\n| {'Threshold':<33} | {'Success Rate':^14} |"
+    out += "\n" + line
+    for th_t in [1, 3, 5]:
+        ratio = np.mean(errors_t < th_t)
+        out += f"\n| {f'Translation < {th_t}m ({th_t*100}cm)':<33} | {ratio*100:>12.2f}% |"
+    for th_R in [1.0, 3.0, 5.0]:
+        ratio = np.mean(errors_R < th_R)
+        out += f"\n| {f'Rotation < {th_R:.1f} deg':<33} | {ratio*100:>12.2f}% |"
+    out += "\n" + line
     logger.info(out)
     return out
 
@@ -214,5 +233,26 @@ def evaluate_target(
         "Completeness": test_num / total_num if total_num > 0 else 0,
     }
 
-    logger.info("Target evaluation: %s", stats)
+    # ------------------- Target Location Section -------------------
+    w = 54
+    line_full  = "+" + "-"*52 + "+"
+    line_inner = "| " + "-"*50 + " |"
+    target_out = "\n" + line_full
+    target_out += f"\n|{'TARGET INDICATOR EVALUATION'.center(w-2)}|"
+    target_out += "\n" + line_full
+    target_out += f"\n| {'Metric':<33} | {'Value':^14} |"
+    target_out += f"\n|{'-'*35}+{'-'*16}|"
+    target_out += f"\n| {'Median Error (m)':<33} | {np.median(finite_errors):^14.4f} |"
+    target_out += f"\n| {'Std Deviation (m)':<33} | {np.std(finite_errors):^14.4f} |"
+    target_out += f"\n| {'Completeness':<33} | {stats['Completeness']*100:>12.2f}% |"
+    target_out += "\n" + line_full
+    target_out += f"\n|{'TARGET RECALL STATISTICS'.center(w-2)}|"
+    target_out += "\n" + line_full
+    target_out += f"\n| {'Threshold':<33} | {'Success Rate':^14} |"
+    target_out += f"\n|{'-'*35}+{'-'*16}|"
+    target_out += f"\n| {'Recall @ 1m':<33} | {stats['Recall@1m']*100:>12.2f}% |"
+    target_out += f"\n| {'Recall @ 3m':<33} | {stats['Recall@3m']*100:>12.2f}% |"
+    target_out += f"\n| {'Recall @ 5m':<33} | {stats['Recall@5m']*100:>12.2f}% |"
+    target_out += "\n" + line_full
+    logger.info(target_out)
     return stats

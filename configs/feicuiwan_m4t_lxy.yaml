@@ -15,7 +15,7 @@ render_config:
   outputs: "outputs/citystars"
 default_confs:
   from_render_test:
-    checkpoint: "/mnt/sda/MapScape/Pretrained_model/model@mapscape@512@Fourier.ckpt"
+    checkpoint: "data_demo/pretrained_model/model@mapscape@512@Fourier.ckpt"
     refinement:
       num_dbs: 3
       multiscale: [4, 1]

@@ -69,7 +69,7 @@ target_names=(
 # ==== 从 txt 中读取 init_euler 和 init_trans ====
 read_pose_from_file() {
   local name="$1"
-  local pose_file="/mnt/sda/MapScape/query/poses/${name}.txt"
+  local pose_file="data_demo/query/poses/${name}.txt"
 
   if [[ ! -f "$pose_file" ]]; then
     echo "❌ 找不到 pose 文件: $pose_file"
