@@ -141,7 +141,8 @@ class DualProcessTask:
         w, h = cam_cfg["width"], cam_cfg["height"]
 
         self.raw_query_camera = np.array([w, h, cx, cy, fx, fy])
-        self.render_camera_osg = self.raw_query_camera / self.query_resize_ratio
+        self.render_camera_gs = np.array([w, h, w/2, h/2, fx, fx])
+        self.render_camera_gs = self.render_camera_gs / self.query_resize_ratio
 
         cam_cfg["params"] = (
             np.array(cam_cfg["params"]) / self.query_resize_ratio
@@ -151,9 +152,9 @@ class DualProcessTask:
 
         self.query_camera = Camera.from_colmap(cam_cfg)
         self.render_camera = generate_render_camera(
-            self.render_camera_osg
+            self.render_camera_gs
         ).float()
-        self.render_config["render_camera"] = self.render_camera_osg
+        self.render_config["render_camera"] = self.render_camera_gs
 
     def _setup_images(
         self,
@@ -433,8 +434,8 @@ class DualProcessTask:
         queue/timing mismatch between ``color`` and ``img_path`` in the
         localization loop.
         """
-        W = int(self.render_camera_osg[0])
-        H = int(self.render_camera_osg[1])
+        W = int(self.render_camera_gs[0])
+        H = int(self.render_camera_gs[1])
         if W <= 0 or H <= 0:
             return
 
@@ -505,8 +506,8 @@ class DualProcessTask:
             device=device, dtype=torch.float32,
         )
 
-        H = int(self.render_camera_osg[1])
-        W = int(self.render_camera_osg[0])
+        H = int(self.render_camera_gs[1])
+        W = int(self.render_camera_gs[0])
 
         oversample = num_samples * 4
         ys = torch.randint(0, H, size=(oversample,), device=device)
