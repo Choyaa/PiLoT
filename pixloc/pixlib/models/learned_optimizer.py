@@ -133,7 +133,6 @@ class LearnedOptimizer(BaseOptimizer):
              T_init, camera: Camera, T_render, ref_camera: Camera, num_iters, mask: Optional[Tensor] = None,
              W_ref_query: Optional[Tuple[Tensor, Tensor]] = None, T_gt = None, batch = True, last_F_query=None, last_c_query=None, prior = False, T_kf =None):
         # torch.cuda.synchronize()
-        # t0 = time.perf_counter()
         T = T_init
         T_flat = T_init.to_flat()
         num_init_pose = T_init.shape[0]
@@ -151,20 +150,6 @@ class LearnedOptimizer(BaseOptimizer):
         overall_losses = []
         ratio = self.ratio
 
-        if last_F_query is not None:
-            last_c_query = last_c_query.unsqueeze(0)
-            last_F_query = last_F_query.unsqueeze(0)
-            inputs_last = {
-            "pose_data_q": T_flat.unsqueeze(0).clone(),
-            "f_r": last_F_query.clone(),
-            "pose_data_r": T_render.unsqueeze(0).clone(),
-            "cam_data_r": ref_camera.unsqueeze(0).clone(),
-            "f_q": F_query.clone(),
-            "cam_data_q": qcamera.unsqueeze(0).clone(),
-            "p3D": p3D.unsqueeze(0).contiguous().clone(),
-            "c_ref": last_c_query.clone(),
-            "c_query": c_query.clone()
-            }
         inputs = {
             "pose_data_q": T_flat.unsqueeze(0).clone(),
             "f_r": F_ref.clone(),
@@ -213,34 +198,13 @@ class LearnedOptimizer(BaseOptimizer):
 
                 g += g_prior
                 H += H_prior
-            if last_F_query is not None:
-                logger.debug('Using last frame features')
-                g1, H1, w_loss1, cost1 = self.fn(
-                inputs_last['pose_data_q'],
-                inputs_last['f_r'],
-                inputs_last['pose_data_r'],
-                inputs_last['cam_data_r'],
-                inputs_last['f_q'],
-                inputs_last['cam_data_q'],
-                inputs_last['p3D'],
-                inputs_last['c_ref'],
-                inputs_last['c_query']
-            )
-                g1, H1, w_loss1, cost1 = [
-                    x.squeeze(0) if x.shape[0] == 1 else x for x in [g1, H1, w_loss1,cost1]
-                ]
-                ratio_last = 0.5
-                g += ratio_last * g1
-                H += ratio_last * H1
-                w_loss += ratio_last * w_loss1
-                cost += ratio_last * cost1
+            
             g = g.unsqueeze(-1)
             failed = failed 
             
             # compute the cost and aggregate the weights
             delta = self.optimizer_cuda(g, H,0.1, ~failed)
             
-            # print(f"Step 3 - Optimizer step: {time.time() - start_time:.6f}s")
             # compute the pose update
             dw, dt = delta.split([3, 3], dim=-1)
             T_delta = Pose.from_aa(dw, dt)
@@ -250,8 +214,8 @@ class LearnedOptimizer(BaseOptimizer):
            
             overall_losses.append(w_loss)
             
-            if ref_camera[0][0] == 480/ratio and len(overall_losses) == 2 and len(T_flat) > 1:
-                _, topk_indices = torch.topk(-overall_losses[-1], 32, dim=-1, largest=True, sorted=True)
+            if num_iters == 3 and len(overall_losses) == 2 and len(T_flat) > 1:  #ref_camera[0][0] == 480/ratio
+                _, topk_indices = torch.topk(-overall_losses[-1], 32, dim=-1, largest=True, sorted=True) # topk_indices: [B, 32]
                 T_flat = T_flat[topk_indices]
                 T = T[topk_indices]
                 failed = failed[topk_indices]
@@ -259,42 +223,11 @@ class LearnedOptimizer(BaseOptimizer):
                 cost = cost[topk_indices]
                 inputs["pose_data_q"] =  T_flat.unsqueeze(0).contiguous().clone()
                 inputs["cam_data_q"] = qcamera.unsqueeze(0).clone()
-                # print('topk_indices: ',topk_indices)
-                if last_F_query is not None:
-                    inputs_last["pose_data_q"] =  T_flat.unsqueeze(0).contiguous().clone()
-                    inputs_last["cam_data_q"] = qcamera.unsqueeze(0).clone()
                 total_cost_loss = w_loss[topk_indices]
             else:
                 total_cost_loss = w_loss
-            # if ref_camera[0][0] == 960/ratio and len(overall_losses) == 1 and len(T_flat) > 1:
-            #     _, topk_indices = torch.topk(-overall_losses[0], 32, dim=-1, largest=True, sorted=True)
-            #     T_flat = T_flat[topk_indices]
-            #     T = T[topk_indices]
-            #     failed = failed[topk_indices]
-            #     qcamera = qcamera[:len(topk_indices)]
-            #     cost = cost[topk_indices]
-            #     inputs["pose_data_q"] =  T_flat.unsqueeze(0).contiguous().clone()
-            #     inputs["cam_data_q"] = qcamera.unsqueeze(0).contiguous().clone()
-            # if ref_camera[0][0] == 1920/ratio and len(overall_losses) == 1 and len(T_flat) > 1:
-            #     _, topk_indices = torch.topk(-overall_losses[0], 32, dim=-1, largest=True, sorted=True)
-            #     # topk_indices = topk_indices[0]
-            #     T_flat = T_flat[topk_indices]
-            #     T = T[topk_indices]
-            #     failed = failed[topk_indices]
-            #     qcamera = qcamera[:len(topk_indices)]
-            #     cost = cost[topk_indices]
-            #     inputs["pose_data_q"] =  T_flat.unsqueeze(0).contiguous().clone()
-            #     inputs["cam_data_q"] = qcamera.unsqueeze(0).clone()
-            
-        # errors_all = torch.stack(err_list, dim=0).T  # [b, 10]
-        # for i in range(len(errors_all)):
-
-        
-        # print('argmax weight loss: ', torch.argmax(total_loss))
-        # print('argmin cost: ', torch.argmin(total_cost_loss))
+         
         torch.cuda.synchronize()
         t1 = time.perf_counter()
-        # time_lm = (t1 - t0)*1000
-        # print(f"latency: {time_lm} ms")
         
         return T, failed, total_cost_loss # T[initial pose]
